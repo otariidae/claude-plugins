@@ -1,5 +1,7 @@
 ## 参考文献
 
+このプラグインは下記を参考に作成しました。すばらしい知見を共有してくださる著者の方々に感謝いたします。
+
 - [[Rails基礎] DBモデリング基礎講座](https://zenn.dev/igaiga/books/rails-practice-note/viewer/rails_db_modeling_workshop)
 - [Simplicity on Rails -- RDB, REST and Ruby](https://speakerdeck.com/moro/simplicity-on-rails-rdb-rest-and-ruby)
 - [Railsの仕組みを理解してモデルを上手に育てる - モデルを見つける、モデルを分割する良いタイミング -](https://speakerdeck.com/igaiga/kaigionrails2024/)
