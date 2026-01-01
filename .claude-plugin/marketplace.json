@@ -1,0 +1,16 @@
+{
+  "name": "otariidae-claude-plugins",
+  "owner": {
+    "name": "otariidae"
+  },
+  "plugins": [
+    {
+      "name": "react-design",
+      "source": "./plugins/react-design"
+    },
+    {
+      "name": "rails-design",
+      "source": "./plugins/rails-design"
+    }
+  ]
+}
