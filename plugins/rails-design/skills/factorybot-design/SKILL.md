@@ -36,7 +36,14 @@ end
 
 ### 2. build vs create の使い分け
 
-**DB保存不要なら build を優先**
+**ビルド戦略の特性**
+
+- **build**: `initialize_with` に従いインスタンス生成（デフォルトは `.new`）、`after_build` 実行
+- **create**: build 後に永続化（デフォルトは `#save!`）、`after_build` → `before_create` → `to_create` → `after_create`
+- **build_stubbed**: 偽のActiveRecordオブジェクト、`id` と `persisted?` はセット済み、実際は未保存
+- **attributes_for**: 属性ハッシュのみ返す、フック実行なし
+
+**使い分け**
 
 - build で十分: バリデーション、ロジック、属性アクセス、プレゼンテーション
 - create が必要: DB制約、関連取得、スコープ、コールバック
@@ -76,7 +83,7 @@ factory :post do
 
   trait :with_comments do
     transient { comments_count { 3 } }
-    after(:create) { |post, ev| create_list(:comment, ev.comments_count, post: post) }
+    after(:create) { |post, ev| create_list(:comment, ev.comments_count, post:) }
   end
 end
 ```
@@ -85,30 +92,61 @@ end
 - `build_stubbed(:comment)` で関連も `build_stubbed` される
 - `user { create(:user) }` だと `build(:comment)` でも create が走る
 
-**逆関連の重複問題**
+**has_many 関連: 重複生成を避ける**
 
-親から子へ逆方向の関連を定義する場合、inline definitionを使う:
+親が子を持つ場合、ナイーブな定義では子の生成時に親が再生成されてしまう問題がある
+
+**推奨: `instance` 参照で重複回避**
 ```ruby
-factory :post do
-  title { "Post" }
-  comments { [association(:comment, post: nil)] }  # inline definition
+factory :author do
+  trait :with_post do
+    post { association(:post, author: instance) }
+  end
 end
 ```
 
-または trait で柔軟に制御:
+**原則: ファクトリで子を作りすぎない**
+
+関連のカスタマイズはテストコードで明示が無難:
 ```ruby
-trait :with_comments do
-  transient { comments_count { 3 } }
-  after(:create) { |post, ev| create_list(:comment, ev.comments_count, post: post) }
+# Good: シンプルなファクトリ
+factory :author do
+  name { "Author" }
+end
+
+# テストで関連を明示的に構築
+let(:author) { create(:author) }
+let!(:published_post) { create(:post, :published, author:) }
+let!(:draft_post) { create(:post, :draft, author:) }
+```
+
+代替: ヘルパーメソッド
+```ruby
+def author_with_posts(published: 1, draft: 0)
+  create(:author).tap do |author|
+    create_list(:post, published, :published, author:)
+    create_list(:post, draft, :draft, author:)
+  end
 end
 ```
+
+**相互接続関連の `instance` 参照**
+```ruby
+factory :student do
+  school
+  profile { association(:profile, student: instance, school:) }
+end
+```
+
+注意: `initialize_with` 内で `instance` 参照は `nil` になる
 
 ### 4. Trait の活用
 
-**状態のバリエーション表現に使用**
+**関連属性セットと振る舞いをグループ化**
 
 用途: ステータス、オプショナル関連、属性パターン
 命名: `with_` (関連), enum値, 形容詞 (`published`)
+特性: 合成可能、ネスト可能、親属性を上書き可能、transientと組み合わせ可能
 
 ```ruby
 factory :article do
@@ -122,7 +160,13 @@ factory :article do
 
   trait :with_comments do
     transient { comments_count { 3 } }
-    after(:create) { |article, ev| create_list(:comment, ev.comments_count, article: article) }
+    after(:create) { |article, ev| create_list(:comment, ev.comments_count, article:) }
+  end
+
+  # trait のネスト
+  trait :featured do
+    published  # 他の trait を含められる
+    featured_at { Time.current }
   end
 end
 
@@ -157,7 +201,12 @@ before { create(:post, :published, author: user, title: "Important") }
 
 ### 5. 高度なテクニック
 
-**Transient + コールバック**
+**Transient 属性**
+
+オブジェクトに永続化されず、ファクトリロジックのみで使用:
+- コールバックでの条件付きセットアップに便利
+- `attributes_for` ではフィルタされる
+- 複雑な関連構築を永続化せずに実現
 
 ```ruby
 trait :with_members do
@@ -166,17 +215,30 @@ trait :with_members do
     member_roles { [:developer] }
   end
   after(:create) do |team, ev|
-    ev.members_count.times { |i| create(:membership, team: team, role: ev.member_roles[i % ev.member_roles.length]) }
+    ev.members_count.times { |i| create(:membership, team:, role: ev.member_roles[i % ev.member_roles.length]) }
   end
 end
 
 create(:team, :with_members, members_count: 10, member_roles: [:admin, :developer])
 ```
 
+**コールバック**
+
+利用可能: `before_all`, `after_build`, `before_create`, `after_create`, `after_stub`, `after_all`
+- 複数定義可能、定義順に実行
+- 親ファクトリから継承、親が先に実行
+- ブロックは `|instance, evaluator|` を受け取る
+
+```ruby
+after(:create) do |user, context|
+  user.send_welcome_email if context.send_email
+end
+```
+
 **継承とネスト**
 
 ```ruby
-# ネスト推奨
+# ネスト推奨（共通バリエーション）
 factory :user do
   sequence(:email) { |n| "user#{n}@example.com" }
 
@@ -198,6 +260,8 @@ create(:admin)  # 管理者
 3. **build で DB アクセス**: `user { create(:user) }` ではなく `association :user`
 4. **無駄な create**: build で済むなら build
 5. **名前の不一致**: ファクトリ名とモデル名を一致
+6. **同名ファクトリの重複定義**: エラーになる
+7. **build_stubbed の誤用**: `Marshal.dump` 不可、関連取得不可に注意
 
 ## 黄金律
 
