@@ -97,6 +97,12 @@ validates :company_name,  presence: true, on: :completion
 if signup.valid?(:identification)
 ```
 
+**落とし穴**: `valid?(:completion)` が走らせるのは「`on:` の無い検証」と
+「`on: :completion` の検証」だけです。`on: :identification` の検証は素通りするので、
+フェーズごとに必ずその入口で `valid?(そのフェーズ)` を呼ぶこと。
+1つのメソッドで全フェーズを処理するなら `on:` を付けてはいけません
+（宣言したのに一度も走らない検証ができ、未検証の値がそのまま保存されます）。
+
 ### 2. 外部システムとの境界
 
 HTTP・SDK・ファイル形式など、**アプリの外側との会話**を 1 クラスに閉じる。
@@ -193,10 +199,14 @@ class Invoice::Summary
     @invoices = invoices
   end
 
-  def total       = Money.new(cents: @invoices.sum(:amount_cents), currency: "JPY")
-  def overdue     = @invoices.select(&:overdue?)
-  def average     = Money.new(cents: total.cents / count, currency: "JPY") if count.positive?
-  def count       = @invoices.size
+  def total   = Money.new(cents: @invoices.sum(:amount_cents), currency: "JPY")
+  def overdue = @invoices.select(&:overdue?)
+  def count   = @invoices.size
+
+  # エンドレスメソッドに if / unless 修飾子は付けない（定義そのものが条件分岐になる）
+  def average
+    Money.new(cents: total.cents / count, currency: "JPY") if count.positive?
+  end
 end
 ```
 

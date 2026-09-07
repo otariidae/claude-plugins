@@ -306,12 +306,12 @@ class Signup
 
   attr_reader :account, :user
 
-  # フェーズごとに違う検証は on: コンテキストで分ける
-  validates :email_address, format: { with: URI::MailTo::EMAIL_REGEXP }, on: :identification
-  validates :company_name, presence: true, on: :completion
+  # コンテキスト指定の無い検証は、どの valid?(context) でも必ず走る
+  validates :company_name, presence: true, length: { maximum: 100 }
+  validates :email_address, format: { with: URI::MailTo::EMAIL_REGEXP }
 
   def create
-    return false unless valid?(:completion)
+    return false unless valid?
 
     ActiveRecord::Base.transaction do
       @account = Account.create!(name: company_name)
@@ -322,6 +322,12 @@ class Signup
   end
 end
 ```
+
+**`on:` コンテキストを使うときの注意**: `valid?(:completion)` が走らせるのは
+「`on:` の無い検証」と「`on: :completion` の検証」だけで、`on: :identification` の検証は
+**素通りします**。フェーズを分けるなら、各フェーズの入口でそれぞれの
+`valid?(:identification)` / `valid?(:completion)` を必ず呼ぶこと。1つのメソッドで
+全部やる場合は、上のように `on:` を付けない。
 
 #### RESTリソースとしての定義
 - **原則**: あらゆる行為をリソースのCRUD操作として捉える

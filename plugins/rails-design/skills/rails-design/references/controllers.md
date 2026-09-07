@@ -174,9 +174,18 @@ module Authorization
   end
 
   private
-    def ensure_admin = head :forbidden unless Current.user.admin?
+    def ensure_admin
+      head :forbidden unless Current.user.admin?
+    end
 end
 ```
+
+エンドレスメソッド定義（`def foo = bar`）に `unless` / `if` の修飾子を付けてはいけません。
+`def ensure_admin = head :forbidden unless Current.user.admin?` は
+`(def ensure_admin = head :forbidden) unless Current.user.admin?` と解釈され、
+**メソッド定義そのものがクラス読み込み時の条件分岐になります**
+（クラス定義時点の `Current.user` は nil なので起動時に `NoMethodError`）。
+修飾子が要るときは通常の `def ... end` で書きます。
 
 ## アクションは 1〜3 行
 

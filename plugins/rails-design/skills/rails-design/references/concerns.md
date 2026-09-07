@@ -114,12 +114,12 @@ module Searchable
 
   private
     def index_for_search
-      SearchEntry.create!(search_entry_attributes) if searchable?
+      search_entry.update!(search_entry_attributes) if searchable?
     end
 
     def reindex_for_search
       if searchable?
-        SearchEntry.upsert!(search_entry_attributes)
+        search_entry.update!(search_entry_attributes)
       else
         remove_from_search_index
       end
@@ -129,8 +129,12 @@ module Searchable
       SearchEntry.find_by(searchable: self)&.destroy
     end
 
+    def search_entry
+      SearchEntry.find_or_initialize_by(searchable: self)
+    end
+
     def search_entry_attributes
-      { searchable: self, title: search_title, content: search_content }
+      { title: search_title, content: search_content }
     end
 
     # 以下は include するモデル側が実装する
@@ -173,7 +177,7 @@ end
 ```
 
 ```ruby
-# app/models/comment.rb — 別モデルは別の埋め方をする
+# app/models/comment/searchable.rb — 別モデルは別の埋め方をする
 module Comment::Searchable
   extend ActiveSupport::Concern
 

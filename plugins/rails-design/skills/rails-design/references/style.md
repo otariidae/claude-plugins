@@ -219,6 +219,12 @@ def search_title = title
 
 複数行になるものには使わない。
 
+**`if` / `unless` の修飾子を付けてはいけない。**
+`def average = calculate if count.positive?` は
+`(def average = calculate) if count.positive?` と解釈され、メソッド定義そのものが
+クラス読み込み時の条件分岐になる（条件が偽ならメソッドが存在しない）。
+修飾子が要るなら通常の `def ... end` で書く。
+
 ## Ruby の新しい記法を使う
 
 - ブロック引数の暗黙変数 `it`（Ruby 3.4）
