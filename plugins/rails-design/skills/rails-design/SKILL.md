@@ -43,7 +43,7 @@ description: このスキルはRailsのモデル設計・コード設計の相�
   2. POROで責務を切り出せないか検討
   3. それでも解決しない場合のみService層を検討
 - `app/services` ディレクトリや `XxxService` という命名は、置き場所の思考停止のサイン。
-  詳細は判断フローAと `references/poros.md`
+  詳細は判断フローAと `references/logic-placement.md`
 
 #### 行数による「Fatモデル」の判断
 - **誤った判断基準**: コード行数が多い = Fat = 悪
@@ -52,7 +52,7 @@ description: このスキルはRailsのモデル設計・コード設計の相�
   - バリデーションの条件分岐（`if: :condition?`）が発生しているか
   - 複数の関心事が混在しているか
 - **対処法**:
-  - 関心事ごとのconcernに分割（`references/concerns.md`）
+  - 関心事ごとのconcernに分割（`references/logic-placement.md`）
   - フォームオブジェクトで画面ごとのバリデーションを分離
   - イベント型モデルで行為を切り出し
 
@@ -113,7 +113,7 @@ Railsの機構での分割は、機能追加のたびに全ファイルを触る
 **横断concernはテンプレートメソッドで書く**: 骨格を横断concernに、
 モデル固有の埋め方を同名のモデル固有concernに置き、そこから `include ::Searchable` します。
 
-詳細は `references/concerns.md`、`references/poros.md`。
+詳細は `references/logic-placement.md`。
 
 ---
 
@@ -155,10 +155,15 @@ module Post::Archivable
     scope :active,   -> { where.missing(:archival) }
   end
 
+  # 述語のようにその行だけで完結するものはエンドレス定義でよい
   def archived?   = archival.present?
   def archived_at = archival&.created_at
   def archived_by = archival&.user
 
+  # 条件付きの操作は必ず通常の def ... end で書く。
+  # `def archive(user: Current.user) = create_archival!(user:) unless archived?` は
+  # `(def archive = ...) unless archived?` と解釈され、メソッド定義そのものが
+  # 読み込み時の条件分岐になる（クラス定義時点では archived? を呼べず NoMethodError）
   def archive(user: Current.user)
     unless archived?
       transaction do
@@ -289,7 +294,7 @@ end
 - **配置場所**: `app/models` 以下（`app/services` は作らない）
 - **命名**: 返すもの・演じる役割を名詞で。`-er` / `-or` の行為者名詞は可。
   `Service` / `Manager` / `Handler` / `Processor` / `UseCase` は中身を説明していないので不可
-- 詳細と4分類は `references/poros.md`
+- 詳細と4分類は `references/logic-placement.md`
 
 #### フォームオブジェクト
 - **適用場面**: 画面ごとに異なるバリデーション / 複数モデルにまたがる入力
@@ -450,14 +455,28 @@ end
 - 完璧を求めすぎず、実用的なバランスを重視する
 - 過度な抽象化や premature optimization は避ける
 - Railsの思想「Convention over Configuration」を尊重する
-- 37signals のハウススタイル（`references/style.md`）は、そのまま持ち込むかどうかを
-  チームの判断に委ねる。特にガード節・インデントの規約は一般的なrubocop設定と衝突する
+
+## コードスタイルの注意
+
+37signals のハウススタイルのうち、**判断が変わるもの**だけ挙げます。
+残りは fizzy の `STYLE.md` を直接読むほうが正確です。
+
+- **ガード節は推奨されていない**（世間に流布する理解と逆）。`STYLE.md` は
+  「expanded conditionals over guard clauses」と明記し、`if ... else ... end` を好む。
+  例外は「メソッド冒頭のearly return」と「本体が数行以上ある場合」の2つだけ
+- **`!` は同名の非bangが存在するときだけ**付ける。破壊的だから付ける、ではない
+- **`_now` は対で書く決まりではない**。同期版と非同期版が同名で衝突するときだけ使う。
+  普通は `reindex` / `reindex_later` のように同期版は素の名前でよい
+- **エンドレスメソッド定義に `if` / `unless` 修飾子を付けてはいけない**。
+  `def average = calc if count.positive?` は
+  `(def average = calc) if count.positive?` と解釈され、メソッド定義そのものが
+  読み込み時の条件分岐になる（条件が偽ならメソッドが存在しない）
+- 可視性修飾子の下をインデントする規約は、rubocop デフォルト
+  （`Layout/IndentationConsistency`）と衝突する。持ち込むかはチームの判断
 
 ## references
 
-- **`references/concerns.md`** — モデル固有concernと横断concernの使い分け、テンプレートメソッド方式、命名、依存の向き
-- **`references/poros.md`** — 主語テスト、PORO の4分類、命名（Service禁止の理由）、置き場、入口はモデル
-- **`references/state-modeling.md`** — 状態表現の判断フロー詳細（STI / delegated_type / ジョイン / enum / has_one / timestamp / boolean）と状態遷移の書き方
-- **`references/controllers.md`** — 動詞→リソース名詞の変換表、ネストの形、`*Scoped` concern、`ensure_*` 認可、bang、strong parameters、`Current`
-- **`references/style.md`** — 37signals のコードスタイル要約（ガード節・可視性修飾子・メソッド順・`!`・`_later`/`_now`）
-- **`references/evidence.md`** — 上記の主張を basecamp/fizzy・once-campfire・writebook の実コードで裏どりした記録（`path:line` 付き）
+- **`references/logic-placement.md`** — 判断フローAの詳細。concernの2種類と切り方・命名、テンプレートメソッド方式、依存の向き、POROの4分類と命名・置き場
+- **`references/state-modeling.md`** — 判断フローBの詳細。STI / delegated_type / ジョイン / enum / timestamp / boolean の使い分けと状態遷移の書き方
+- **`references/controllers.md`** — 判断フローCの詳細。動詞→リソース名詞の変換表、ネストの形、`*Scoped` concern、`ensure_*` 認可、bang、strong parameters
+- **`references/evidence.md`** — 上記の主張を basecamp/fizzy・once-campfire・writebook の実コードで裏どりした記録（判定31件、`path:line` 付き）
