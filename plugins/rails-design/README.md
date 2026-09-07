@@ -23,6 +23,20 @@ Railsにおける良い設計を支援するためのプラグインです。モ
 - [楽々ERDレッスン 第1回：「お持ち帰りご注文用紙」編](https://codezine.jp/article/detail/154)
 - [楽々ERDレッスン 第2回：「図書館の予約申込書」編](https://codezine.jp/article/detail/175)
 
+### 37signals のリファレンス実装
+
+`rails-design` スキルの concern / PORO / 状態表現 / REST リソース化 / コントローラに関する記述は、
+下記の公開実装を実際に読んで裏どりしました。検証時の SHA と `path:line` 参照は
+[`skills/rails-design/references/evidence.md`](skills/rails-design/references/evidence.md) にあります。
+
+- [basecamp/fizzy](https://github.com/basecamp/fizzy)（O'Saasy License）
+- [basecamp/once-campfire](https://github.com/basecamp/once-campfire)（MIT）
+- [basecamp/writebook](https://github.com/basecamp/writebook)（ソース公開・OSS ではない）
+- [Vanilla Rails is plenty](https://dev.37signals.com/vanilla-rails-is-plenty/)
+
+いずれもライセンスが CC0-1.0 ではないため、`references/*.md` のコード例は
+すべて架空ドメインで書き起こした自作の最小例です。逐語のコピーは含みません。
+
 ### factory_bot
 
 - [FactoryBot公式ドキュメント](https://thoughtbot.github.io/factory_bot/)
