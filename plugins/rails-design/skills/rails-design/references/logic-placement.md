@@ -1,6 +1,6 @@
 # ロジックの置き場（concern と PORO）
 
-判断フローA の詳細。裏どりは `evidence.md`。
+判断フローA の詳細。
 一般的なRailsの書き方は前提とし、判断が変わる点だけを書いている。
 
 ## concern は 2 種類ある
@@ -50,9 +50,7 @@ module Searchable
   extend ActiveSupport::Concern
 
   included do
-    after_create_commit  :index_for_search
-    after_update_commit  :reindex_for_search
-    after_destroy_commit :remove_from_search_index
+    after_update_commit :reindex_for_search
   end
 
   private
@@ -60,19 +58,14 @@ module Searchable
     # - search_title:   検索結果に出す見出し
     # - search_content: 全文検索の対象本文
 
-    # テンプレートメソッド（デフォルトあり）
-    def searchable?
-      true
-    end
+    def searchable? = true   # テンプレートメソッド（デフォルトあり）
 end
-```
 
-```ruby
 # app/models/post/searchable.rb — 穴を埋める
 module Post::Searchable
   extend ActiveSupport::Concern
 
-  include ::Searchable          # `::` を付けないと自分自身を再帰的に指す
+  include ::Searchable       # `::` を付けないと自分自身を再帰的に指す
 
   def search_title   = title
   def search_content = body.to_plain_text
@@ -90,24 +83,9 @@ end
 
 ### パラメータ化するときは class_methods の DSL
 
-モデルごとに「親の辿り方」が違うような横断concernは、宣言用のクラスメソッドを提供し、
-`define_method` で差分を注入する。
-
-```ruby
-class_methods do
-  def positioned_within(parent, association:)
-    define_method(:positioned_siblings) { public_send(parent).public_send(association).positioned }
-    private :positioned_siblings
-  end
-end
-
-# 利用側
-class Chapter < ApplicationRecord
-  include Positionable
-  positioned_within :book, association: :chapters
-end
-```
-
+モデルごとに「親の辿り方」が違うような横断concernは、`class_methods do` に宣言用マクロを置き、
+`define_method` でモデルごとの差分を注入する
+（`positioned_within :book, association: :chapters` のような呼び出し形にする）。
 コントローラ側の `before_action` を注入するconcern（`allow_unauthenticated_access` のような
 除外マクロ）も同じ形。
 
@@ -137,22 +115,10 @@ end
 HTTP・SDK・ファイル形式など、**アプリの外側との会話**を1クラスに閉じる。
 ドメインモデルは入口だけを持ち、通信の詳細を知らない。
 
-```ruby
-# app/models/payment/charge.rb — HTTP・レスポンス解釈・例外の翻訳をここに閉じる
-class Payment::Charge
-  class Declined < StandardError; end
-  class Unavailable < StandardError; end
-
-  def initialize(amount_cents:, currency:, token:) = # ...
-  def execute = # プロバイダ固有のJSONをアプリの語彙に翻訳して返す
-end
-
-# app/models/invoice/payable.rb — モデル側は入口だけ
-def pay(token:)
-  receipt = Payment::Charge.new(amount_cents:, currency:, token:).execute
-  create_payment!(external_id: receipt.id, paid_at: receipt.completed_at)
-end
-```
+`Payment::Charge` が HTTP・タイムアウト・プロバイダ固有のレスポンス解釈を持ち、
+プロバイダのエラーをアプリの語彙の例外（`Payment::Charge::Declined` など）に翻訳する。
+`Invoice::Payable#pay` は `Payment::Charge.new(...).execute` を呼んで結果を保存するだけで、
+`Net::HTTP` もプロバイダのステータスコードも知らない。
 
 プロバイダが複数あるなら抽象基底 + サブクラスにし、基底の公開メソッドは
 `raise NotImplementedError` で穴を開ける。

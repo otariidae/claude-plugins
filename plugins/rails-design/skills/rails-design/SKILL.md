@@ -108,28 +108,21 @@ module Post::Archivable
     scope :active,   -> { where.missing(:archival) }
   end
 
-  def archived?   = archival.present?
-  def archived_at = archival&.created_at
-  def archived_by = archival&.user
+  def archived? = archival.present?
 
-  # 条件付きの操作は必ず通常の def ... end で書く。
-  # `def archive(user: Current.user) = create_archival!(user:) unless archived?` は
-  # `(def archive = ...) unless archived?` と解釈され、メソッド定義そのものが
-  # 読み込み時の条件分岐になる（クラス定義時点では archived? を呼べず NoMethodError）
   def archive(user: Current.user)
-    unless archived?                    # 冪等にする。コントローラで存在チェックしない
+    unless archived?          # 冪等にする。コントローラで存在チェックしない
       transaction do
-        unpublish                       # 状態間の依存はモデル側に書く
+        unpublish             # 状態間の依存はモデル側に書く
         create_archival!(user: user)
       end
     end
   end
-
-  def unarchive
-    archival&.destroy if archived?
-  end
 end
 ```
+
+`archived_at` / `archived_by` は `archival&.created_at` / `archival&.user` に委譲する。
+条件付きの操作をエンドレスメソッドで書いてはいけない（`controllers.md` の罠を参照）。
 
 レコードにすると「誰が・いつ」がタダで付き、付随属性を後から足してもメインテーブルは無傷。
 `where(archived: true)` と違ってNULLの三値論理を踏まず、期間や実行者で絞り込める。
@@ -282,4 +275,5 @@ HABTMは避ける。関連自体が独立したイベントエンティティに
 - **`references/logic-placement.md`** — 判断フローAの詳細。concernの2種類と切り方、テンプレートメソッド方式、POROの4分類と置き場
 - **`references/state-modeling.md`** — 判断フローBの詳細。STI / delegated_type / ジョイン / enum / timestamp / boolean の使い分け
 - **`references/controllers.md`** — 判断フローCの詳細。動詞→リソース名詞の変換表、`*Scoped` concern、認可、bang、strong parameters
-- **`references/evidence.md`** — 上記の主張を basecamp/fizzy・once-campfire・writebook の実コードで裏どりした記録（判定31件、`path:line` 付き）
+
+内容は basecamp の fizzy・once-campfire・writebook の実装を読んで裏どりしている（SHAはREADME）。

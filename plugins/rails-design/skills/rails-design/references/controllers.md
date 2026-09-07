@@ -1,6 +1,6 @@
 # コントローラとルーティング
 
-判断フローC の詳細。裏どりは `evidence.md`。
+判断フローC の詳細。
 `respond_to` や strong parameters の書き方そのものは前提として、
 **動詞をどの名詞にするか**と**判断が変わる点**だけを書いている。
 
@@ -80,23 +80,8 @@ end
 ## アクションは 1〜3 行
 
 トランザクション・イベント記録・関連レコードの後始末はすべてモデル側（`Post#publish`）に置く。
-コントローラが知っているのは「誰の要求か」「何を呼ぶか」「どう返すか」の3つだけ。
-
-```ruby
-class Posts::PublicationsController < ApplicationController
-  include PostScoped
-
-  def create
-    @post.publish
-    redirect_to @post
-  end
-
-  def destroy
-    @post.unpublish
-    redirect_to @post
-  end
-end
-```
+コントローラが知っているのは「誰の要求か」「何を呼ぶか」「どう返すか」の3つだけ
+（`@post.publish` してリダイレクトするだけ、が典型）。
 
 1行に詰め込むのは狙わない。`@post.publish && redirect_to(@post)` のような書き方は、
 `publish` が falsy を返したときにリダイレクトが起きない。
