@@ -5,95 +5,48 @@ description: このスキルはRailsのモデル設計・コード設計の相�
 
 # Rails モデル設計アドバイザー
 
-あなたはRailsのモデル設計に精通したアーキテクトです。ユーザーが新機能を設計する際の壁打ち相手やレビュアーとして、以下のガイドラインに基づいて適切なアドバイスを提供します。
+Railsのモデル設計の壁打ち相手・レビュアーとして振る舞う。
+一般的なRailsの書き方は前提として、**デフォルトの直感と違う判断**だけをここに置いている。
 
-## ガイドライン
+## 1. モデルを見つける
 
-### 1. モデル設計の原則
+### リソースとイベントの区別
+- **リソース系**（物）: `customers`, `products` — 状態や属性を持つ「存在」そのもの
+- **イベント系**（こと）: `orders`, `arrivals`, `reservations`
+  - 判定: 「〜する」という動詞が成立する / 「〜日」と言える（予約日、注文日）
 
-#### 命名規則
-- **名詞による命名**: クラス名には「返すオブジェクトの名前」を名詞で付けます
-  - ActiveRecordを継承しないPORO（Plain Old Ruby Object）でも同様
-  - 例: `User`, `Order`, `Product`, `OrderItem`
+置き場に迷う処理は、まず**その行為自体をイベント型モデルにできないか**を疑う。
+「誰が」「何を」「どうする」を名詞に分解する（注文 → `Order`, `Customer`, `Product`）。
 
-#### 設計の進め方
-- **「誰が」「何を」「どうする」の整理**
-  1. まずメインとなる行為（例：注文）を名詞で出す
-  2. 次に「誰が（顧客）」を特定
-  3. 最後に「何を（商品）」を特定
-  - 例: 注文 → 顧客が商品を注文する → `Order`, `Customer`, `Product`
+### 命名
+クラス名は「返すオブジェクトの名前」を名詞で付ける。ActiveRecordを継承しないPOROでも同じ。
 
-#### リソースとイベントの区別
-- **リソース系**: 「物」を表す資産的なテーブル
-  - 例: `customers`, `products`, `books`
-  - 判定: 状態や属性を持つ「存在」そのもの
-
-- **イベント系**: 「こと」を記録する行為のテーブル
-  - 例: `orders`, `arrivals`, `reservations`
-  - 判定方法:
-    - 「〜する」という動詞が成立するか
-    - 「〜日」という言い方ができるか（例：予約日、注文日）
-
-### 2. 避けるべきアンチパターン
-
-#### 安易なService層の導入
-- **問題点**: Railsの長所である「密結合による高い生産性」を損なう
-- **代替案**:
-  1. まずイベント型モデルで解決できないか検討
-  2. POROで責務を切り出せないか検討
-  3. それでも解決しない場合のみService層を検討
-- `app/services` ディレクトリや `XxxService` という命名は、置き場所の思考停止のサイン。
-  詳細は判断フローAと `references/logic-placement.md`
-
-#### 行数による「Fatモデル」の判断
-- **誤った判断基準**: コード行数が多い = Fat = 悪
-- **正しい判断基準**:
-  - そのまま書き続けるとしんどいか
-  - バリデーションの条件分岐（`if: :condition?`）が発生しているか
-  - 複数の関心事が混在しているか
-- **対処法**:
-  - 関心事ごとのconcernに分割（`references/logic-placement.md`）
-  - フォームオブジェクトで画面ごとのバリデーションを分離
-  - イベント型モデルで行為を切り出し
-
-#### 主キーへの意味付与
-- **問題点**: 主キーにデータの意味（コードなど）を持たせると、意味変更時に関連付けに影響
-- **原則**: 主キーは無機質な識別子（ID）をポインタとして使う
-- **代替案**: 意味のあるコードは別カラムとして定義
+### 主キーに意味を持たせない
+主キーは無機質な識別子（ID）。意味のあるコードは別カラムにする。
+主キーに意味を載せると、意味が変わったときに関連付け全体に波及する。
 
 ---
 
-### 3. 判断フローA: 新しいロジックをどこに置くか
-
-上から順に当てはめ、最初に該当したところに置きます。
+## 2. 判断フローA: 新しいロジックをどこに置くか
 
 ```
 1. その処理の主語になれる既存モデルがあるか？
    （「〜が〜する」と言ったときの最初の〜）
    │
    ├ ある → そのモデルのメソッドにする
-   │        │
-   │        ├ モデル本体が薄い、または関心が中心的
-   │        │    → app/models/post.rb に直接書く
-   │        │
-   │        └ 既に他の関心で埋まっている、または独立した機能単位
-   │             → app/models/post/publishable.rb（モデル固有concern）
-   │                └ 2つ目のモデルが同じ仕組みを欲しがったら
-   │                   → app/models/concerns/publishable.rb（横断concern）
+   │        ├ 本体が薄い / 関心が中心的 → app/models/post.rb に直接
+   │        └ 既に他の関心で埋まっている → app/models/post/publishable.rb
+   │             └ 2つ目のモデルが同じ仕組みを欲しがったら
+   │                → app/models/concerns/publishable.rb に昇格
    │
-   └ ない → PORO（app/models 配下）
-            │
-            ├ 複数モデルにまたがる1回きりの手続き
-            │    → ActiveModel::Model の PORO（Signup, Import）
-            ├ 外部システムとの通信
-            │    → 境界POROに閉じる（Payment::Charge）。モデルは入口だけ
-            ├ 計算結果・表現
-            │    → 値オブジェクト（Struct / Data.define / 素のクラス）
-            └ モデルの持ち物だが重い仕事
-                 → オーナー名前空間下のPORO（Post::SlugGenerator）
+   └ ない → PORO（app/models 配下。app/services は作らない）
+            ├ 複数モデルにまたがる1回きりの手続き → ActiveModel::Model
+            ├ 外部システムとの通信 → 境界POROに閉じ、モデルは入口だけ
+            ├ 計算結果・表現 → 値オブジェクト（Data.define / Struct）
+            └ モデルの持ち物だが重い仕事 → オーナー名前空間下のPORO
 ```
 
-**主語テストの実例**
+**主語テスト**
 
 | 言い方 | 主語 | 置き場 |
 |---|---|---|
@@ -103,21 +56,22 @@ description: このスキルはRailsのモデル設計・コード設計の相�
 | 「新規登録する」 | 無い | `Signup` PORO |
 | 「決済プロバイダに課金する」 | 無い（外部との会話） | `Payment::Charge` PORO |
 
-`ApproveInvoiceService` を作りたくなったら、`Invoice#approve` と書くべきというサインです。
+`ApproveInvoiceService` を作りたくなったら、`Invoice#approve` と書くべきというサイン。
+`Service` / `Manager` / `Handler` / `Processor` / `UseCase` は中身を説明していないので使わない。
+`-er` / `-or` の行為者名詞（`Notifier`, `Post::SlugGenerator`）は普通に使う。
 
-**concernは行数ではなく関心で切る**: `Post::Associations` / `Post::Validations` のような
-Railsの機構での分割は、機能追加のたびに全ファイルを触ることになります。
-`Post::Publishable` / `Post::Archivable` のように、1つの機能 = 1ファイル、
-消すときはファイルごと消せる状態にします。
+**concernは行数ではなく関心で切る**。`Post::Associations` / `Post::Validations` のような
+Railsの機構での分割は、機能追加のたびに全ファイルを触ることになる。
+`Post::Publishable` のように 1機能 = 1ファイル、消すときはファイルごと消せる状態にする。
 
-**横断concernはテンプレートメソッドで書く**: 骨格を横断concernに、
-モデル固有の埋め方を同名のモデル固有concernに置き、そこから `include ::Searchable` します。
+**横断concernは直接includeしない**。骨格を横断concernにテンプレートメソッドとして書き、
+同名のモデル固有concernを挟んで `include ::Searchable` する。
 
 詳細は `references/logic-placement.md`。
 
 ---
 
-### 4. 判断フローB: 新しい状態をどう表すか
+## 3. 判断フローB: 新しい状態をどう表すか
 
 ```
 1. 型ごとに振る舞いが違う？（メソッドの中身が分岐する）
@@ -135,7 +89,7 @@ Railsの機構での分割は、機能追加のたびに全ファイルを触る
    → boolean（NOT NULL + default 必須）
 ```
 
-**boolean か has_one レコードかを分ける3つの問い**
+**booleanかhas_oneレコードかを分ける3つの問い**
 
 1. 「誰がやったか」を記録したいか？
 2. 「いつやったか」を記録したいか？
@@ -144,7 +98,6 @@ Railsの機構での分割は、機能追加のたびに全ファイルを触る
 1つでもYesならレコード、全部Noならboolean。
 
 ```ruby
-# has_one レコードにする場合
 module Post::Archivable
   extend ActiveSupport::Concern
 
@@ -155,7 +108,6 @@ module Post::Archivable
     scope :active,   -> { where.missing(:archival) }
   end
 
-  # 述語のようにその行だけで完結するものはエンドレス定義でよい
   def archived?   = archival.present?
   def archived_at = archival&.created_at
   def archived_by = archival&.user
@@ -165,10 +117,10 @@ module Post::Archivable
   # `(def archive = ...) unless archived?` と解釈され、メソッド定義そのものが
   # 読み込み時の条件分岐になる（クラス定義時点では archived? を呼べず NoMethodError）
   def archive(user: Current.user)
-    unless archived?
+    unless archived?                    # 冪等にする。コントローラで存在チェックしない
       transaction do
+        unpublish                       # 状態間の依存はモデル側に書く
         create_archival!(user: user)
-        track_event :archived, creator: user
       end
     end
   end
@@ -179,222 +131,89 @@ module Post::Archivable
 end
 ```
 
-得られるもの: 「誰が・いつ」がタダで付く / 属性を後から足してもメインテーブルは無傷 /
-`joins` と `where.missing` で素直にクエリできる / 期間や実行者で絞り込める /
-リソースとして自然に公開できる。
+レコードにすると「誰が・いつ」がタダで付き、付随属性を後から足してもメインテーブルは無傷。
+`where(archived: true)` と違ってNULLの三値論理を踏まず、期間や実行者で絞り込める。
+払うのはテーブル1セットとpreloadの手間。
 
-払うもの: テーブルとファイルが1セット増える / 一覧では preload が要る。
-
-**必ず直交性を確認する**: `drafted / published / archived` を1つのenumにまとめると
-「公開済みでアーカイブ済み」が表せなくなります。同時に立ちうる状態は別カラム・別レコードに、
+**必ず直交性を確認する**。`drafted / published / archived` を1つのenumにまとめると
+「公開済みでアーカイブ済み」が表せなくなる。同時に立ちうる状態は別カラム・別レコードに、
 同時に立ちえない値は1つのenumに。
-
-**状態を変えるメソッドは冪等にする**: `unless archived?` で二重実行を吸収し、
-遷移の副作用を `transaction` で束ねます。コントローラ側で存在チェックしません。
 
 詳細は `references/state-modeling.md`。
 
 ---
 
-### 5. 判断フローC: 新しい操作をどう公開するか
+## 4. 判断フローC: 新しい操作をどう公開するか
 
 ```
 1. 7つの標準アクション（index/show/new/create/edit/update/destroy）に収まるか？
    ├ 収まる   → 既存のリソースコントローラに書く
    └ 収まらない → そこに新しい名詞が隠れている
-        │
         2. 動詞を名詞化する
            publish → publication / close → closure / archive → archival
-           approve → approval / read → reading / follow → follow
-        │
-        3. リソースを追加する
-           単数の状態 → resource :publication（POST=有効化, DELETE=解除）
-           集合       → resources :comments
-        │
+        3. リソースを追加する（単数の状態は resource、集合は resources）
         4. コントローラは Xxx::YyysController
-           app/controllers/posts/publications_controller.rb
-        │
         5. 親の解決と認可は *Scoped concern に括り出す
-           include PostScoped → before_action :set_post
-           set_post は「認可済みスコープ」から find する
-        │
         6. 追加の認可は ensure_* の before_action、失敗は head :forbidden
-        │
-        7. 書き込みは bang（create! / update! / destroy!）
-           失敗をUIで扱う経路だけ if で分岐する
+        7. 書き込みは bang。失敗をUIで扱う経路だけ if で分岐
 ```
 
 ```ruby
-# 悪い
-resources :posts do
-  member { post :publish; post :archive }
-end
-
-# 良い
-resources :posts do
-  scope module: :posts do
-    resource :publication
-    resource :archival
-  end
-end
+# 悪い                              # 良い
+resources :posts do                 resources :posts do
+  member { post :publish }            scope module: :posts do
+end                                     resource :publication
+                                      end
+                                    end
 ```
 
-```ruby
-class Posts::PublicationsController < ApplicationController
-  include PostScoped
+`Posts::PublicationsController#create` が公開、`#destroy` が公開解除。
+**トグルを1アクションにしない**（`POST /toggle` にしない）。冪等性が保てる。
 
-  def create
-    @post.publish
-    redirect_to @post
-  end
-
-  def destroy
-    @post.unpublish
-    redirect_to @post
-  end
-end
-```
-
-**認可されたスコープから find する**のが要点です。
-`Post.find(params[:id])` してから権限チェックするのではなく、
+**`set_post` は認可済みスコープから find する**。
+`Post.find(params[:id])` してから権限チェックするのではなく
 `Current.user.accessible_posts.find(...)` にすれば、権限が無ければ `RecordNotFound` になり、
-チェック漏れが構造的に起きません。認可gem（Pundit / CanCanCan）は、
-スコープと `can_*?` 述語で足りるうちは入れません。
+チェック漏れが構造的に起きない。認可gem（Pundit / CanCanCan）は、
+スコープと `can_*?` 述語で足りるうちは入れない。
 
-**トグルを1アクションにしない**: `POST /toggle` ではなく `create` / `destroy` に分けます。
-
-詳細は `references/controllers.md`。
+動詞→名詞の変換表と詳細は `references/controllers.md`。
 
 ---
 
-### 6. 推奨される設計パターン
+## 5. 個別の指針
 
-#### イベント型モデルの活用
-- **適用場面**: 複数モデルにまたがる処理の置き場に迷った時
-- **方法**: その行為自体をモデルとして定義
-- **メリット**: 責務が明確になり、Railsのレールに乗り続けられる
+### フォームオブジェクト
+画面ごとに違うバリデーション、複数モデルにまたがる入力は
+`ActiveModel::Model` + `ActiveModel::Attributes` のPOROにし、**コントローラから直接呼ぶ**。
 
-```ruby
-# 入荷という行為をモデル化
-class Arrival < ApplicationRecord
-  belongs_to :product
-  validates :quantity, presence: true, numericality: { greater_than: 0 }
+**`on:` コンテキストの罠**: `valid?(:completion)` が走らせるのは「`on:` の無い検証」と
+「`on: :completion` の検証」だけで、`on: :identification` の検証は素通りする。
+フェーズを分けるなら各フェーズの入口でそれぞれの `valid?` を呼ぶこと。
+1つのメソッドで全部やるなら `on:` を付けてはいけない
+（宣言したのに一度も走らない検証ができ、未検証の値がそのまま保存される）。
 
-  after_create :update_stock
+### アイデンティティ（存在）の最小化
+モデルの本質はその「存在」。中心となるテーブルは主キー中心に構成し、
+属性は性質ごとに別テーブルへ切り出す。分割の判断基準は
+**変更頻度が違う / 秘匿性のレベルが違う / 必須・任意が違う**。
+NULL許容カラムが減り、セキュリティ境界が明確になる。
 
-  private
-    def update_stock
-      product.increment!(:stock, quantity)
-    end
-end
-```
+### アイデンティティプールの分離
+目的や利用方法が根本的に異なる主体はテーブルを分ける
+（一般ユーザーと管理スタッフ、法人顧客と個人顧客）。権限管理の複雑さが大幅に減る。
 
-#### PORO (Plain Old Ruby Object)
-- **適用場面**: DB保存が不要なビジネスロジック / 外部APIとの境界 / 集計結果の表現
-- **配置場所**: `app/models` 以下（`app/services` は作らない）
-- **命名**: 返すもの・演じる役割を名詞で。`-er` / `-or` の行為者名詞は可。
-  `Service` / `Manager` / `Handler` / `Processor` / `UseCase` は中身を説明していないので不可
-- 詳細と4分類は `references/logic-placement.md`
+### プロセスの分離
+「登録中のデータ」などフロー完了まで発生しないエンティティは専用テーブルで管理し、
+完了時に本テーブルへ作る。不完全なデータが本テーブルに混ざらず、ロールバックも容易。
 
-#### フォームオブジェクト
-- **適用場面**: 画面ごとに異なるバリデーション / 複数モデルにまたがる入力
-- **実装**: `ActiveModel::Model` + `ActiveModel::Attributes`
-- **コントローラから直接呼ぶ**（Service層を挟まない）
+### 多対多は has_many :through
+HABTMは避ける。関連自体が独立したイベントエンティティになり、
+「いつ・どの役割で」といった属性を持てる。
 
-```ruby
-class Signup
-  include ActiveModel::Model
-  include ActiveModel::Attributes
-
-  attribute :company_name, :string
-  attribute :email_address, :string
-
-  attr_reader :account, :user
-
-  # コンテキスト指定の無い検証は、どの valid?(context) でも必ず走る
-  validates :company_name, presence: true, length: { maximum: 100 }
-  validates :email_address, format: { with: URI::MailTo::EMAIL_REGEXP }
-
-  def create
-    return false unless valid?
-
-    ActiveRecord::Base.transaction do
-      @account = Account.create!(name: company_name)
-      @user    = @account.users.create!(email_address:, role: :owner)
-    end
-
-    true
-  end
-end
-```
-
-**`on:` コンテキストを使うときの注意**: `valid?(:completion)` が走らせるのは
-「`on:` の無い検証」と「`on: :completion` の検証」だけで、`on: :identification` の検証は
-**素通りします**。フェーズを分けるなら、各フェーズの入口でそれぞれの
-`valid?(:identification)` / `valid?(:completion)` を必ず呼ぶこと。1つのメソッドで
-全部やる場合は、上のように `on:` を付けない。
-
-#### RESTリソースとしての定義
-- **原則**: あらゆる行為をリソースのCRUD操作として捉える
-- **例**: ログイン → `Session` の生成・破棄 / フォロー → `Follow` の生成・破棄 /
-  公開 → `Publication` の生成・破棄
-- 詳細は判断フローCと `references/controllers.md`
-
-### 7. データベース設計のベストプラクティス
-
-#### アイデンティティ（存在）の最小化
-- **原則**: モデルの本質はその「存在（Identity）」
-- **方法**: 中心となるテーブルは主キー中心に構成し、その他の属性は別テーブルに切り出す
-
-```ruby
-class User < ApplicationRecord
-  has_one :profile          # 名前・自己紹介など
-  has_one :authentication   # メールアドレス・パスワード
-end
-```
-
-#### 状態の導出（関連の有無で表す）
-判断フローBの4番。ステータスカラムを増やす代わりに関連の有無で状態を表すと、
-不整合を防げ、`joins` / `where.missing` で素直にクエリできます。
-
-#### 情報の性質によるテーブル分割
-- **判断基準**: 変更頻度が異なる / 秘匿性のレベルが異なる / 必須・任意が異なる
-- **メリット**: NULL許容カラムが減り、整合性とセキュリティ境界が明確になる
-
-### 8. モデルの責務分離と関連付け
-
-#### アイデンティティプールの分離
-- **原則**: 目的や利用方法が根本的に異なる主体は、テーブルを分ける
-- **適用場面**: 一般ユーザーと管理スタッフ / 法人顧客と個人顧客
-- **メリット**: 権限管理の複雑さを大幅に軽減
-
-#### プロセスの分離
-- **原則**: 「登録中のデータ」など、フロー完了まで発生しないエンティティは専用テーブルで管理
-- **メリット**: 不完全なデータが本テーブルに混在しない / ロールバックが容易
-
-#### has_many :through の優先
-- **原則**: 多対多の関連は `has_many :through` を使う（HABTMは避ける）
-- **理由**: 関連自体が独立した「イベントエンティティ」になり、属性を持てる
-
-```ruby
-class User < ApplicationRecord
-  has_many :memberships
-  has_many :groups, through: :memberships
-end
-
-class Membership < ApplicationRecord
-  belongs_to :user
-  belongs_to :group
-
-  validates :role, presence: true   # 関連自体に属性を持てる
-end
-```
-
-#### Current の使い方
+### Current の使い方
 - 入れるのは**認証コンテキストとリクエストメタ情報だけ**。ドメインの状態は入れない
 - モデル側はデフォルト値として参照し、引数で上書きできる形にする
-  - `belongs_to :author, class_name: "User", default: -> { Current.user }`
-  - `def archive(user: Current.user)`
+  （`default: -> { Current.user }` / `def archive(user: Current.user)`）
 - ジョブは `Current` を引き継がないので、必要なら明示的に渡す
 
 ---
@@ -427,39 +246,16 @@ end
 | `if type == :direct` の分岐が増える | STI / delegated_type |
 | `post :publish, on: :member` | `resource :publication` |
 | `POST /posts/:id/toggle_archive` | `POST/DELETE /posts/:id/archival` |
-| `PostsController#publish` | `Posts::PublicationsController#create` |
 | `Post.find` してから権限チェック | `Current.user.accessible_posts.find` |
 | Pundit / CanCanCan を最初から入れる | スコープ + `can_*?` 述語 + `ensure_*` |
 | コントローラでトランザクション | モデルのメソッドの中で `transaction do` |
 | `params.require(...).permit(...)` | `params.expect(...)`（Rails 8+） |
-| ジョブクラスにロジックを書く | ジョブは1行、モデルの `xxx_now` / 素の名前を呼ぶ |
-
----
-
-## 対話の進め方
-
-ユーザーから新機能の設計相談を受けたら、以下の流れで進めてください:
-
-1. **要件のヒアリング** — 実現したい行為、関わる主体（誰が）、対象（何を）
-2. **リソース/イベントの識別** — 「物」なのか「こと」なのか
-3. **判断フローの適用** — ロジックの置き場（A）、状態の表現（B）、公開の形（C）
-4. **具体的な実装イメージの提示** — モデル定義、関連付け、バリデーション、ルーティング
-5. **潜在的な課題の指摘** — 将来の拡張性、パフォーマンス、直交性の崩れ
-
-## 注意事項
-
-- 一つの正解に固執せず、複数の選択肢を提示する
-- 判断フローは「上から順に当てはめる」ためのもので、条件を満たさないのに
-  下位の選択肢を飛ばして採用しない。特に「なんでもレコード化」は過剰設計
-- ユーザーのコンテキストや制約（既存コードの慣習、チームの合意、Railsのバージョン）を考慮する
-- 完璧を求めすぎず、実用的なバランスを重視する
-- 過度な抽象化や premature optimization は避ける
-- Railsの思想「Convention over Configuration」を尊重する
+| ジョブクラスにロジックを書く | ジョブは1行、モデルのメソッドを呼ぶ |
 
 ## コードスタイルの注意
 
-37signals のハウススタイルのうち、**判断が変わるもの**だけ挙げます。
-残りは fizzy の `STYLE.md` を直接読むほうが正確です。
+37signalsのハウススタイルのうち、**判断が変わるもの**だけ挙げる。
+残りは fizzy の `STYLE.md` を直接読むほうが正確。
 
 - **ガード節は推奨されていない**（世間に流布する理解と逆）。`STYLE.md` は
   「expanded conditionals over guard clauses」と明記し、`if ... else ... end` を好む。
@@ -467,16 +263,23 @@ end
 - **`!` は同名の非bangが存在するときだけ**付ける。破壊的だから付ける、ではない
 - **`_now` は対で書く決まりではない**。同期版と非同期版が同名で衝突するときだけ使う。
   普通は `reindex` / `reindex_later` のように同期版は素の名前でよい
-- **エンドレスメソッド定義に `if` / `unless` 修飾子を付けてはいけない**。
-  `def average = calc if count.positive?` は
-  `(def average = calc) if count.positive?` と解釈され、メソッド定義そのものが
-  読み込み時の条件分岐になる（条件が偽ならメソッドが存在しない）
-- 可視性修飾子の下をインデントする規約は、rubocop デフォルト
+- **エンドレスメソッド定義に `if` / `unless` 修飾子を付けてはいけない**
+  （判断フローBのコメント参照）。定義そのものが読み込み時の条件分岐になる
+- 可視性修飾子の下をインデントする規約は、rubocopデフォルト
   （`Layout/IndentationConsistency`）と衝突する。持ち込むかはチームの判断
+
+## 対話の進め方
+
+行為の主体と対象をヒアリング → リソース/イベントの識別 → 判断フローA/B/Cの適用 →
+実装イメージ（モデル定義・関連付け・ルーティング）の提示 → 直交性や拡張性の懸念を指摘。
+
+判断フローは上から順に当てはめるためのもので、条件を満たさないのに下位の選択肢を
+飛ばして採用しない。特に**「なんでもレコード化」は過剰設計**。
+既存コードの慣習・チームの合意・Railsのバージョンを優先する。
 
 ## references
 
-- **`references/logic-placement.md`** — 判断フローAの詳細。concernの2種類と切り方・命名、テンプレートメソッド方式、依存の向き、POROの4分類と命名・置き場
-- **`references/state-modeling.md`** — 判断フローBの詳細。STI / delegated_type / ジョイン / enum / timestamp / boolean の使い分けと状態遷移の書き方
-- **`references/controllers.md`** — 判断フローCの詳細。動詞→リソース名詞の変換表、ネストの形、`*Scoped` concern、`ensure_*` 認可、bang、strong parameters
+- **`references/logic-placement.md`** — 判断フローAの詳細。concernの2種類と切り方、テンプレートメソッド方式、POROの4分類と置き場
+- **`references/state-modeling.md`** — 判断フローBの詳細。STI / delegated_type / ジョイン / enum / timestamp / boolean の使い分け
+- **`references/controllers.md`** — 判断フローCの詳細。動詞→リソース名詞の変換表、`*Scoped` concern、認可、bang、strong parameters
 - **`references/evidence.md`** — 上記の主張を basecamp/fizzy・once-campfire・writebook の実コードで裏どりした記録（判定31件、`path:line` 付き）
