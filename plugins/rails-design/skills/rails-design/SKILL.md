@@ -1,6 +1,6 @@
 ---
 name: rails-design
-description: このスキルはRailsのモデル設計・コード設計の相談やレビューで使用する。モデリングやテーブル設計が関連する機能追加や改修、モデル構造・関連付け・マイグレーション・バリデーションの検討、concernへの分割、POROやservice/フォームオブジェクトの是非、状態の表現方法（enum・boolean・timestamp・has_one・STI）、RESTリソース（resource / resources）やコントローラの設計、Currentの扱い、エラー設計・例外処理・エラーハンドリング（カスタム例外の是非、rescue / rescue_fromの置き場、Result型の要否、ジョブのretry_on / discard_on）、およびRailsコードのレビューの際に、Railsのベストプラクティスの知識に基づいて壁打ち・レビューを行う。
+description: Railsのモデル設計・コード設計の壁打ちとレビューに使う。モデリング／テーブル設計、concern・PORO・serviceの置き場、状態表現（enum・boolean・timestamp・has_one・STI）、RESTリソースとコントローラ、Current、エラー設計（rescue / retry_on / discard_on）、Railsコードレビューの際に使用する。
 ---
 
 # Rails モデル設計アドバイザー
@@ -193,42 +193,30 @@ HABTMは避ける。関連自体に「いつ・どの役割で」を持てるよ
 
 ---
 
-## レビュー時チェックリスト
+## レビュー時
 
-1. **`XxxService` / `app/services` が無いか** — 主語になるモデルがあればそのメソッドに移す
-2. **concernが関心単位で切れているか** — `Validations` / `Callbacks` のような機構分割になっていないか
-3. **1モデルしか使わない横断concernが `app/models/concerns/` に無いか** — モデル名前空間下に戻す
-4. **新しいboolean/statusカラムに「誰が・いつ」が要らないか** — 要るなら `has_one` レコード
-5. **enumに同時に立ちうる状態を詰め込んでいないか** — 直交する状態は別に持つ
-6. **booleanに `null: false` + `default:` があるか**
-7. **`member do post :xxx end` が無いか** — 名詞リソースに変換する
-8. **`set_xxx` が認可済みスコープから find しているか** — `Model.find` の後で権限チェックになっていないか
-9. **コントローラのアクションが5行を超えていないか** — 超えているならモデルに移せる塊がある
-10. **書き込みがbangか、失敗を扱う分岐があるか** — 戻り値を無視した `save` / `update` が最悪
-11. **エラー経路** — カスタム例外に rescue する人がいるか / 境界外に gem・ネットワーク例外が出ていないか / `rescue => e` の置き場が許された4箇所以外に無いか / ユーザー入力失敗を例外で運んでいないか / ジョブの `perform` に `rescue` / `retry_job` が無いか（詳細は `error-handling.md`）
+まず下の対照表を走査する。加えて:
+
+- **booleanに `null: false` + `default:` があるか**
+- **コントローラのアクションが5行を超えていないか** — 超えているならモデルに移せる塊がある
+- **書き込みがbangか、失敗を扱う分岐があるか** — 戻り値を無視した `save` / `update` が最悪
+- **エラー経路** — `references/error-handling.md` 末尾の対照表も見る
 
 ## 「惰性 → リファレンス実装」対照表
 
 | つい書いてしまう形 | 37signals 流 |
 |---|---|
-| `ApproveInvoiceService.new(invoice).call` | `invoice.approve` |
-| `app/services/` に置く | `app/models/` に置く（POROもモデル） |
-| `SignupProcessor` / `PaymentHandler` | `Signup` / `Payment::Charge`（役割を名乗る名詞） |
-| `post.rb` に全部書いて800行 | `app/models/post/*.rb` に関心ごとのconcern |
-| 最初から `app/models/concerns/` | まずモデル固有concern、2モデル目で昇格 |
+| `ApproveInvoiceService` / `SignupProcessor` / `app/services/` | `invoice.approve` / `Signup`。POROも `app/models/` |
+| `post.rb` に全部 / 最初から `app/models/concerns/` | 関心ごとのモデル固有concern → 2モデル目で昇格 |
 | 横断concernを直接include | 同名のモデル固有concernを挟んで `include ::Xxx` |
-| `posts.archived` (boolean) | `has_one :archival`（誰が・いつが要るなら） |
-| `posts.status` に可逆トグルを追加 | 直交する状態は別カラム・別レコード |
+| `posts.archived` (boolean) / status に可逆トグル | `has_one :archival`（誰が・いつが要るなら）。直交する状態は別カラム・別レコード |
 | `if type == :direct` の分岐が増える | STI / delegated_type |
-| `post :publish, on: :member` | `resource :publication` |
-| `POST /posts/:id/toggle_archive` | `POST/DELETE /posts/:id/archival` |
-| `Post.find` してから権限チェック | `Current.user.accessible_posts.find` |
-| Pundit / CanCanCan を最初から入れる | スコープ + `can_*?` 述語 + `ensure_*` |
-| コントローラでトランザクション | モデルのメソッドの中で `transaction do` |
+| `post :publish, on: :member` / `POST .../toggle_*` | `resource :publication` / `POST/DELETE .../archival` |
+| `Post.find` してから権限チェック / 最初から Pundit | 認可済みスコープの `find` + `can_*?` + `ensure_*` |
+| コントローラでトランザクション / ジョブにロジック | モデルのメソッドへ。ジョブは1行 |
 | `params.require(...).permit(...)` | `params.expect(...)`（Rails 8+） |
-| ジョブクラスにロジックを書く | ジョブは1行、モデルのメソッドを呼ぶ |
 
-エラー編の対照表は `references/error-handling.md` の末尾。
+エラー編は `references/error-handling.md` の末尾。
 
 ## コードスタイルの注意
 
@@ -248,17 +236,11 @@ HABTMは避ける。関連自体に「いつ・どの役割で」を持てるよ
 
 ## 対話の進め方
 
-行為の主体と対象をヒアリング → リソース/イベントの識別 → 判断フローA/B/C/Dの適用 →
-実装イメージの提示 → 直交性や拡張性の懸念を指摘。
-
-判断フローは上から順に当てはめる。特に**「なんでもレコード化」は過剰設計**。
+行為の主体と対象をヒアリング → リソース/イベントの識別 → 判断フローA/B/C/D（上から順）→
+実装イメージの提示。特に**「なんでもレコード化」は過剰設計**。
 既存コードの慣習・チームの合意・Railsのバージョンを優先する。
 
 ## references
 
-- `references/logic-placement.md` — 判断フローA
-- `references/state-modeling.md` — 判断フローB
-- `references/controllers.md` — 判断フローC
-- `references/error-handling.md` — 判断フローD
-
-内容は basecamp の fizzy・once-campfire・writebook の実装を読んで裏どりしている（SHAはREADME）。
+- `references/logic-placement.md` / `state-modeling.md` / `controllers.md` / `error-handling.md`
+  （判断フローA–D。裏どり元のSHAはREADME）
