@@ -10,22 +10,20 @@
 | 置き場 | `app/models/post/publishable.rb` | `app/models/concerns/searchable.rb` |
 | モジュール名 | `Post::Publishable` | `Searchable` |
 | 使うモデル | 1 つだけ | 2 つ以上 |
-| 数 | 多い（リファレンス実装では 8 対 69） | 少ない |
+| 数 | 多い | 少ない |
 
 **まず必ずモデル固有として書く。** 2 つ目のモデルが同じものを欲しがった時点で、はじめて
-`app/models/concerns/` に引き上げる。最初から横断concernに置くと、1モデルしか使わない
-汎用化されたコードという最悪の形になる。
+`app/models/concerns/` に引き上げる。
 
 モデル名前空間下にあるので、`Post` 側は `include Publishable` と短く書ける。
 
 ## 何が 1 つの concern になるか
 
-**1つのユーザーから見える機能 = 1 concern。** 関連 + スコープ + 述語メソッド +
-操作メソッド + コールバックが1ファイルに揃い、機能を消すときはファイルごと消せる状態。
+**1つのユーザーから見える機能 = 1 concern。** 関連 + スコープ + 述語 + 操作 + コールバックが1ファイルに揃い、消すときはファイルごと消せる。
 
 | 良い切り方 | 悪い切り方 |
 |---|---|
-| `Post::Publishable` / `Post::Archivable` / `Post::Commentable` — 1機能 | `Post::Associations` / `Post::Validations` / `Post::Callbacks` — Railsの**機構**で切っている。機能追加のたびに全ファイルを触る |
+| `Post::Publishable` / `Post::Archivable` — 1機能 | `Post::Associations` / `Post::Validations` — Railsの**機構**で切っている |
 | | `Post::Helpers` / `Post::Utils` — 中身を説明していない |
 | | `Post::Part1` — 行数だけで切った証拠 |
 
@@ -73,10 +71,6 @@ module Post::Searchable
 end
 ```
 
-**利点**: `Post` のクラス定義は `include Searchable` 1行のまま。Post固有の検索の都合は
-`Post::Searchable` に閉じ、横断concernを汚さない。別モデル（`Comment::Searchable`）は
-別の埋め方をする。
-
 「モデル側が実装するもの」はコメントで列挙し、デフォルトを与えられるものは
 `# テンプレートメソッド` と書いてデフォルト実装を置く。
 スコープを同時に足すときは `included do ... include ::Searchable ... end` の形になる。
@@ -85,16 +79,14 @@ end
 
 モデルごとに「親の辿り方」が違うような横断concernは、`class_methods do` に宣言用マクロを置き、
 `define_method` でモデルごとの差分を注入する
-（`positioned_within :book, association: :chapters` のような呼び出し形にする）。
-コントローラ側の `before_action` を注入するconcern（`allow_unauthenticated_access` のような
-除外マクロ）も同じ形。
+（`positioned_within :book, association: :chapters` のような呼び出し形）。
+コントローラ側の除外マクロ（`allow_unauthenticated_access`）も同じ形。
 
 ### 依存の向き
 
 - モデル固有concernは、本体のカラム・関連を参照してよい
-- 横断concernがinclude先の実装に依存するときは、**必ずテンプレートメソッド経由**。
-  `Searchable` の中に `post.title` と直接書いてはいけない
-- concern同士の相互参照は避ける。include順を変えると壊れる状態になったら設計が間違っている
+- 横断concernがinclude先の実装に依存するときは、**必ずテンプレートメソッド経由**
+- concern同士の相互参照は避ける
 - クラスメソッドを増やすときは `class_methods do`。`ClassMethods` を手書きしない
 
 ---
@@ -116,17 +108,14 @@ HTTP・SDK・ファイル形式など、**アプリの外側との会話**を1�
 ドメインモデルは入口だけを持ち、通信の詳細を知らない。
 
 `Payment::Charge` が HTTP・タイムアウト・プロバイダ固有のレスポンス解釈を持ち、
-プロバイダのエラーをアプリの語彙の例外（`Payment::Charge::Declined` など）に翻訳する
-（データ・例外・nil のどれに翻訳するかの選び方は `error-handling.md` §4）。
-`Invoice::Payable#pay` は `Payment::Charge.new(...).execute` を呼んで結果を保存するだけで、
-`Net::HTTP` もプロバイダのステータスコードも知らない。
+プロバイダのエラーをアプリの語彙に翻訳する（選び方は `error-handling.md` §4）。
+`Invoice::Payable#pay` は `Payment::Charge.new(...).execute` を呼んで結果を保存するだけ。
 
 プロバイダが複数あるなら抽象基底 + サブクラスにし、基底の公開メソッドは
 `raise NotImplementedError` で穴を開ける。
 
-**例外**: 「試行そのものを記録に残す」要件がある外部通信はARモデルにしてよい。
-リトライ・レスポンス保存・状態遷移が必要なWebhook配送などは、
-`Webhook::Delivery < ApplicationRecord` が state の enum を持ち自分でHTTPも打つ形が自然。
+**例外**: 「試行そのものを記録に残す」要件がある外部通信はARモデルにしてよい
+（`Webhook::Delivery < ApplicationRecord` が state の enum を持ち自分でHTTPも打つ）。
 
 ### 3. 値・表現
 
@@ -155,8 +144,6 @@ HTTP・SDK・ファイル形式など、**アプリの外側との会話**を1�
 | `InvoiceUseCase` / `InvoiceInteractor` | Railsの語彙ではない層を持ち込んでいる |
 
 **置き場は `app/models`。** `app/services` / `app/interactors` / `app/use_cases` は作らない。
-`app/models` は「ActiveRecordのディレクトリ」ではなく「ドメインのディレクトリ」で、
-POROもARも同じ場所に並ぶことで「モデルにできないか」を先に考える圧力がかかる。
 オーナーが明確なら名前空間下（`Invoice::Summary`）、アプリ全体の概念ならトップレベル（`Signup`）。
 
 ## concern にしないほうがいいもの

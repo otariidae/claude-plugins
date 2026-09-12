@@ -4,8 +4,6 @@
 STI・enum・delegated_type の書き方そのものはRailsガイドの通りなので、
 **どれを選ぶか**と**選んだときに追加で要る判断**だけを書いている。
 
-`has_one` レコード方式の実装例は SKILL.md 判断フローB を参照。
-
 **どの選択肢でも、操作の公開は名詞リソースのCRUDにする**（`controllers.md`）。
 カラムの持ち方とエンドポイントの形は独立した判断。
 
@@ -16,31 +14,23 @@ STI・enum・delegated_type の書き方そのものはRailsガイドの通り�
 
 - **STI**: 同じカラム構成で振る舞いだけ違う（`Channels::Public` / `Channels::Private`）
 - **delegated_type**: 属性構成そのものが違う（`Entry` + `Article` / `Image`）。
-  共通カラムは親テーブルに、型固有カラムは各テーブルに置けるので、
-  STIのNULLだらけのテーブルを避けられる
+  共通カラムは親テーブルに、型固有カラムは各テーブルに置ける
 
-STIを選んだときに追加で決めることが2つある。
+STIを選んだときに追加で決めること:
 
-- **型の判定は `is_a?`**（`def public? = is_a?(Channels::Public)`）。
-  `type` 文字列との比較をアプリ側に散らさない
-- **型変更を許すか / 許さないかを明示的にバリデーションで書く**。
-  「非公開→公開は不可」のような制約は `type_changed? && type_was == "..."` で明示する。
-  書かないと `update!(type: ...)` で黙って通る
+- **型の判定は `is_a?`**（`def public? = is_a?(Channels::Public)`）。`type` 文字列比較を散らさない
+- **型変更を許すか / 許さないかをバリデーションで明示する**。書かないと `update!(type: ...)` で黙って通る
 
 ## 2. ジョインモデルの属性 — 主体ごとに違う状態
 
 「この記事は既読か」は記事の状態ではなく、**ユーザーと記事の関係の状態**。
-`posts.read` のようなカラムは作れない。`has_many :through` の中間モデルに属性を持たせる。
-
-ここで**「レコードが無い＝オフ」で済ませるか、boolean属性を持つか**の判断がある。
+`has_many :through` の中間モデルに属性を持たせる。
 
 - **区別が要らない** → `has_many :bookmarks` の有無だけで表す
 - **「一度オンにして自分でオフにした」と「まだ触っていない」を区別したい**
-  → 中間モデルに `subscribed` boolean を持ち、`first_or_create.update!` で立てる。
-  自動購読のロジックが、明示的に解除した人を再購読させないために必要になる
+  → 中間モデルに `subscribed` boolean を持ち、`first_or_create.update!` で立てる
 
-`has_and_belongs_to_many` は使わない。関係そのものが属性
-（いつ・どの役割で・どの通知設定で）を持てるようにする。
+`has_and_belongs_to_many` は使わない。
 
 ## 3. enum — 3 値以上のライフサイクル・設定値
 
@@ -56,23 +46,40 @@ enum :status, %w[ pending processing completed failed ].index_by(&:itself), defa
 
 ## 4. has_one レコード + resource — 付随する属性がある可逆状態
 
-判断は次の3問で、**1つでもYesならレコード**。
+SKILL.md の3問で、**1つでもYesならレコード**。
 
-1. 「誰がやったか」を記録したいか？
-2. 「いつやったか」を記録したいか？
-3. その状態に固有の属性（理由・トークン・期限）が今あるか、将来ありそうか？
+```ruby
+module Post::Archivable
+  extend ActiveSupport::Concern
 
-得られるもの:
+  included do
+    has_one :archival, class_name: "Post::Archival", dependent: :destroy
 
-- 「誰が」「いつ」がタダで付く（`archivals.user_id` と `created_at`）
-- 付随属性（`reason`, `expires_at`）を後から足してもメインテーブルは無傷
-- `joins(:archival)` / `where.missing(:archival)` で素直にクエリできる。
-  `where(archived: true)` と違ってNULLの三値論理を踏まない
-- 期間・実行者での絞り込みが書ける（`where(archivals: { created_at: 1.week.ago.. })`）
-- `create` / `destroy` がそのままarchive / unarchiveになり、リソースとして自然に公開できる
+    scope :archived, -> { joins(:archival) }
+    scope :active,   -> { where.missing(:archival) }
+  end
 
-払うもの: テーブルとファイルが1セット増える / 一覧ではpreloadが必要 /
-「archivedな一覧」にJOINが要る（インデックスは張れる）。
+  def archived? = archival.present?
+
+  def archive(user: Current.user)
+    unless archived?          # 冪等にする。コントローラで存在チェックしない
+      transaction do
+        unpublish             # 状態間の依存はモデル側に書く
+        create_archival!(user: user)
+      end
+    end
+  end
+end
+```
+
+`archived_at` / `archived_by` は `archival&.created_at` / `archival&.user` に委譲する。
+条件付きの操作をエンドレスメソッドで書いてはいけない（`controllers.md` の罠を参照）。
+
+得られるもの: 「誰が・いつ」がタダで付く / 付随属性を後から足してもメインテーブルは無傷 /
+`joins(:archival)` / `where.missing(:archival)` で素直にクエリできる /
+`create` / `destroy` がそのまま archive / unarchive になる。
+
+払うもの: テーブルとファイルが1セット / 一覧では preload が必要。
 
 ## 5. nullable timestamp — 「いつ」だけ要る
 
@@ -80,17 +87,14 @@ enum :status, %w[ pending processing completed failed ].index_by(&:itself), defa
 （`notifications.read_at` — `notifications.user_id` で誰が読んだかは一意に決まる）。
 `scope :unread, -> { where(read_at: nil) }` と `read` / `unread` / `read?` を置く。
 
-**timestampにしないほうがいいケース**: 「誰が」が可変（複数の人が同じレコードを閉じうる）。
-その場合は 4 の has_one レコードへ。
+「誰が」が可変なら 4 の has_one レコードへ。
 
 ## 6. boolean — 何も付随しない設定
 
-- **必ず `null: false` + `default:`** を付ける。三値論理を持ち込まない
+- **必ず `null: false` + `default:`**
 - 「機能のオン／オフ」「設定」「所有者しか変えない静的なフラグ」に向く
 - 絞り込み条件になるならインデックスを張る
-- **booleanでも操作はリソースで公開してよい**。writebook は `books.published` boolean を
-  `Books::PublicationsController#update` で変える。「booleanかrecordか」と
-  「リソース化するか」は独立した判断
+- **booleanでも操作はリソースで公開してよい**。「booleanかrecordか」と「リソース化するか」は独立
 
 ## 「状態カラムを増やす」前のチェック
 
@@ -104,9 +108,8 @@ enum :status, %w[ pending processing completed failed ].index_by(&:itself), defa
 | 状態AとBが同時に立てない | enum 1本にまとめる |
 | 状態AとBが独立に立つ | カラム／レコードを分ける（enumにまとめない） |
 
-**直交性の確認は必ずやる。** `drafted / published / archived / closed` を1つのenumに
-まとめると「公開済みでアーカイブ済み」が表せなくなる。逆に、同時に立ちえない値を
-別カラムにすると不整合が入る。
+**直交性の確認は必ずやる。** 同時に立ちうる値を1つのenumにまとめると表せなくなる。
+逆に、同時に立ちえない値を別カラムにすると不整合が入る。
 
 ## 状態遷移の書き方
 

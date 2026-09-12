@@ -23,7 +23,6 @@ Railsのモデル設計の壁打ち相手・レビュアーとして振る舞う
 
 ### 主キーに意味を持たせない
 主キーは無機質な識別子（ID）。意味のあるコードは別カラムにする。
-主キーに意味を載せると、意味が変わったときに関連付け全体に波及する。
 
 ---
 
@@ -57,15 +56,11 @@ Railsのモデル設計の壁打ち相手・レビュアーとして振る舞う
 | 「決済プロバイダに課金する」 | 無い（外部との会話） | `Payment::Charge` PORO |
 
 `ApproveInvoiceService` を作りたくなったら、`Invoice#approve` と書くべきというサイン。
-`Service` / `Manager` / `Handler` / `Processor` / `UseCase` は中身を説明していないので使わない。
+`Service` / `Manager` / `Handler` / `Processor` / `UseCase` は使わない。
 `-er` / `-or` の行為者名詞（`Notifier`, `Post::SlugGenerator`）は普通に使う。
 
-**concernは行数ではなく関心で切る**。`Post::Associations` / `Post::Validations` のような
-Railsの機構での分割は、機能追加のたびに全ファイルを触ることになる。
-`Post::Publishable` のように 1機能 = 1ファイル、消すときはファイルごと消せる状態にする。
-
-**横断concernは直接includeしない**。骨格を横断concernにテンプレートメソッドとして書き、
-同名のモデル固有concernを挟んで `include ::Searchable` する。
+**concernは行数ではなく関心で切る**（`Post::Publishable`。`Post::Associations` のような機構分割はしない）。
+**横断concernは直接includeしない**（同名のモデル固有concernを挟んで `include ::Searchable`）。
 
 詳細は `references/logic-placement.md`。
 
@@ -89,50 +84,15 @@ Railsの機構での分割は、機能追加のたびに全ファイルを触る
    → boolean（NOT NULL + default 必須）
 ```
 
-**booleanかhas_oneレコードかを分ける3つの問い**
+**booleanかhas_oneかを分ける3つの問い**（1つでもYesならレコード）
 
 1. 「誰がやったか」を記録したいか？
 2. 「いつやったか」を記録したいか？
 3. その状態に固有の属性（理由・トークン・期限）が今あるか、将来ありそうか？
 
-1つでもYesならレコード、全部Noならboolean。
+**直交性**: 同時に立ちうる状態は別カラム・別レコードに、同時に立ちえない値は1つのenumに。
 
-```ruby
-module Post::Archivable
-  extend ActiveSupport::Concern
-
-  included do
-    has_one :archival, class_name: "Post::Archival", dependent: :destroy
-
-    scope :archived, -> { joins(:archival) }
-    scope :active,   -> { where.missing(:archival) }
-  end
-
-  def archived? = archival.present?
-
-  def archive(user: Current.user)
-    unless archived?          # 冪等にする。コントローラで存在チェックしない
-      transaction do
-        unpublish             # 状態間の依存はモデル側に書く
-        create_archival!(user: user)
-      end
-    end
-  end
-end
-```
-
-`archived_at` / `archived_by` は `archival&.created_at` / `archival&.user` に委譲する。
-条件付きの操作をエンドレスメソッドで書いてはいけない（`controllers.md` の罠を参照）。
-
-レコードにすると「誰が・いつ」がタダで付き、付随属性を後から足してもメインテーブルは無傷。
-`where(archived: true)` と違ってNULLの三値論理を踏まず、期間や実行者で絞り込める。
-払うのはテーブル1セットとpreloadの手間。
-
-**必ず直交性を確認する**。`drafted / published / archived` を1つのenumにまとめると
-「公開済みでアーカイブ済み」が表せなくなる。同時に立ちうる状態は別カラム・別レコードに、
-同時に立ちえない値は1つのenumに。
-
-詳細は `references/state-modeling.md`。
+詳細・実装例は `references/state-modeling.md`。
 
 ---
 
@@ -161,13 +121,10 @@ end                                     resource :publication
 ```
 
 `Posts::PublicationsController#create` が公開、`#destroy` が公開解除。
-**トグルを1アクションにしない**（`POST /toggle` にしない）。冪等性が保てる。
+**トグルを1アクションにしない**（`POST /toggle` にしない）。
 
-**`set_post` は認可済みスコープから find する**。
-`Post.find(params[:id])` してから権限チェックするのではなく
-`Current.user.accessible_posts.find(...)` にすれば、権限が無ければ `RecordNotFound` になり、
-チェック漏れが構造的に起きない。認可gem（Pundit / CanCanCan）は、
-スコープと `can_*?` 述語で足りるうちは入れない。
+**`set_post` は認可済みスコープから find する**（`Current.user.accessible_posts.find(...)`）。
+認可gemは、スコープと `can_*?` 述語で足りるうちは入れない。
 
 動詞→名詞の変換表と詳細は `references/controllers.md`。
 
@@ -197,34 +154,7 @@ end                                     resource :publication
 ```
 
 **既定は「何もしない」。** `ApplicationController` に `rescue_from` は置かず、Rails 既定の `rescue_responses` に任せる。
-
-```ruby
-class Webhook::Delivery < ApplicationRecord
-  enum :status, %w[ pending processing completed failed ].index_by(&:itself), default: :pending
-  store :response, coder: JSON
-
-  def deliver
-    processing!
-    self.response = perform_request      # 外の例外は perform_request の中で { error: :xxx } に翻訳済み
-    self.status = :completed
-    save!
-  rescue
-    failed!                              # 状態を残してから（transaction の外で）
-    raise                                # ジョブ側が retry / discard を決める
-  end
-end
-
-class Webhook::DeliveryJob < ApplicationJob
-  discard_on ActiveJob::DeserializationError
-
-  def perform(delivery) = delivery.deliver
-end
-```
-
-`Net::ReadTimeout` を見るのは `perform_request` の中だけ。ジョブが再試行したい失敗は、境界が自前の例外に翻訳して `retry_on` に渡す。
-
-**「成立しなかった」は例外ではなく falsy**（`toggle_star` が何もしなかった、`MagicLink.consume` が該当なし）。
-コントローラが `if` で 422 やアラートに振り分ける。**起きてはいけない**失敗だけ bang で 500。
+**「成立しなかった」は例外ではなく falsy。** 起きてはいけない失敗だけ bang で 500。
 アクション直下の `rescue` は、その行が実際に投げるクラスだけ。`rescue => e` をコントローラに書かない。
 
 詳細は `references/error-handling.md`。
@@ -238,28 +168,22 @@ end
 `ActiveModel::Model` + `ActiveModel::Attributes` のPOROにし、**コントローラから直接呼ぶ**。
 
 **`on:` コンテキストの罠**: `valid?(:completion)` が走らせるのは「`on:` の無い検証」と
-「`on: :completion` の検証」だけで、`on: :identification` の検証は素通りする。
-フェーズを分けるなら各フェーズの入口でそれぞれの `valid?` を呼ぶこと。
-1つのメソッドで全部やるなら `on:` を付けてはいけない
-（宣言したのに一度も走らない検証ができ、未検証の値がそのまま保存される）。
+「`on: :completion` の検証」だけ。フェーズを分けるなら各入口でそれぞれの `valid?` を呼ぶ。
+1つのメソッドで全部やるなら `on:` を付けない。
 
 ### アイデンティティ（存在）の最小化
-モデルの本質はその「存在」。中心となるテーブルは主キー中心に構成し、
-属性は性質ごとに別テーブルへ切り出す。分割の判断基準は
-**変更頻度が違う / 秘匿性のレベルが違う / 必須・任意が違う**。
-NULL許容カラムが減り、セキュリティ境界が明確になる。
+中心テーブルは主キー中心に、属性は性質ごとに別テーブルへ。
+分割基準: **変更頻度が違う / 秘匿性のレベルが違う / 必須・任意が違う**。
 
 ### アイデンティティプールの分離
 目的や利用方法が根本的に異なる主体はテーブルを分ける
-（一般ユーザーと管理スタッフ、法人顧客と個人顧客）。権限管理の複雑さが大幅に減る。
+（一般ユーザーと管理スタッフ、法人顧客と個人顧客）。
 
 ### プロセスの分離
-「登録中のデータ」などフロー完了まで発生しないエンティティは専用テーブルで管理し、
-完了時に本テーブルへ作る。不完全なデータが本テーブルに混ざらず、ロールバックも容易。
+フロー完了まで発生しないエンティティは専用テーブルで管理し、完了時に本テーブルへ作る。
 
 ### 多対多は has_many :through
-HABTMは避ける。関連自体が独立したイベントエンティティになり、
-「いつ・どの役割で」といった属性を持てる。
+HABTMは避ける。関連自体に「いつ・どの役割で」を持てるようにする。
 
 ### Current の使い方
 - 入れるのは**認証コンテキストとリクエストメタ情報だけ**。ドメインの状態は入れない
@@ -272,7 +196,7 @@ HABTMは避ける。関連自体が独立したイベントエンティティに
 ## レビュー時チェックリスト
 
 1. **`XxxService` / `app/services` が無いか** — 主語になるモデルがあればそのメソッドに移す
-2. **concernが関心単位で切れているか** — `Validations` / `Callbacks` のような機構での分割になっていないか
+2. **concernが関心単位で切れているか** — `Validations` / `Callbacks` のような機構分割になっていないか
 3. **1モデルしか使わない横断concernが `app/models/concerns/` に無いか** — モデル名前空間下に戻す
 4. **新しいboolean/statusカラムに「誰が・いつ」が要らないか** — 要るなら `has_one` レコード
 5. **enumに同時に立ちうる状態を詰め込んでいないか** — 直交する状態は別に持つ
@@ -281,11 +205,7 @@ HABTMは避ける。関連自体が独立したイベントエンティティに
 8. **`set_xxx` が認可済みスコープから find しているか** — `Model.find` の後で権限チェックになっていないか
 9. **コントローラのアクションが5行を超えていないか** — 超えているならモデルに移せる塊がある
 10. **書き込みがbangか、失敗を扱う分岐があるか** — 戻り値を無視した `save` / `update` が最悪
-11. **カスタム例外に rescue する人がいるか** — 誰も rescue / `retry_on` / `discard_on` しないなら `raise "説明"` でよい。`app/errors/` や `ApplicationError` 基底、`ApplicationController` の `rescue_from` になっていないか
-12. **gem・ネットワーク層の例外が境界の外に出ていないか** — `Net::ReadTimeout` をコントローラやジョブで rescue していたら翻訳漏れ
-13. **`rescue => e` の置き場** — 「状態を保存して raise し直す」「ベストエフォートで nil」「バッチの1件隔離」以外に無いか。握る rescue に理由のコメントがあるか（記録は場面で）。失敗を握ってジョブを成功にしていないか
-14. **ユーザー入力の失敗を例外で運んでいないか** — `errors.add` + 戻り値、`status: :unprocessable_entity`
-15. **ジョブの `perform` に `rescue` / `retry_job` が無いか** — `retry_on` は一時的な原因を名指し、`discard_on ActiveJob::DeserializationError` があるか
+11. **エラー経路** — カスタム例外に rescue する人がいるか / 境界外に gem・ネットワーク例外が出ていないか / `rescue => e` の置き場が許された4箇所以外に無いか / ユーザー入力失敗を例外で運んでいないか / ジョブの `perform` に `rescue` / `retry_job` が無いか（詳細は `error-handling.md`）
 
 ## 「惰性 → リファレンス実装」対照表
 
@@ -307,13 +227,8 @@ HABTMは避ける。関連自体が独立したイベントエンティティに
 | コントローラでトランザクション | モデルのメソッドの中で `transaction do` |
 | `params.require(...).permit(...)` | `params.expect(...)`（Rails 8+） |
 | ジョブクラスにロジックを書く | ジョブは1行、モデルのメソッドを呼ぶ |
-| `app/errors/` + `ApplicationError` 基底 | オーナークラスの中に `class XxxError < StandardError; end` を1行 |
-| `rescue_from StandardError` を `ApplicationController` に | 書かない。Rails の `rescue_responses` + 静的エラーページ |
-| `Result.failure(:timeout)` / Either 型 | 失敗を持つレコード（`status` + `failure_reason`）か素の例外 |
-| ユーザー入力の失敗を `raise InvalidInput` | `errors.add` + falsy 戻り値、`status: :unprocessable_entity` |
-| ジョブの `perform` に `rescue => e; retry_job` | `retry_on` / `discard_on` の宣言。本文は1行 |
 
-エラー編の全表は `references/error-handling.md` の末尾。
+エラー編の対照表は `references/error-handling.md` の末尾。
 
 ## コードスタイルの注意
 
@@ -327,24 +242,23 @@ HABTMは避ける。関連自体が独立したイベントエンティティに
 - **`_now` は対で書く決まりではない**。同期版と非同期版が同名で衝突するときだけ使う。
   普通は `reindex` / `reindex_later` のように同期版は素の名前でよい
 - **エンドレスメソッド定義に `if` / `unless` 修飾子を付けてはいけない**
-  （判断フローBのコメント参照）。定義そのものが読み込み時の条件分岐になる
+  （定義そのものが読み込み時の条件分岐になる。`controllers.md` の罠を参照）
 - 可視性修飾子の下をインデントする規約は、rubocopデフォルト
   （`Layout/IndentationConsistency`）と衝突する。持ち込むかはチームの判断
 
 ## 対話の進め方
 
 行為の主体と対象をヒアリング → リソース/イベントの識別 → 判断フローA/B/C/Dの適用 →
-実装イメージ（モデル定義・関連付け・ルーティング・失敗時の経路）の提示 → 直交性や拡張性の懸念を指摘。
+実装イメージの提示 → 直交性や拡張性の懸念を指摘。
 
-判断フローは上から順に当てはめるためのもので、条件を満たさないのに下位の選択肢を
-飛ばして採用しない。特に**「なんでもレコード化」は過剰設計**。
+判断フローは上から順に当てはめる。特に**「なんでもレコード化」は過剰設計**。
 既存コードの慣習・チームの合意・Railsのバージョンを優先する。
 
 ## references
 
-- **`references/logic-placement.md`** — 判断フローAの詳細。concernの2種類と切り方、テンプレートメソッド方式、POROの4分類と置き場
-- **`references/state-modeling.md`** — 判断フローBの詳細。STI / delegated_type / ジョイン / enum / timestamp / boolean の使い分け
-- **`references/controllers.md`** — 判断フローCの詳細。動詞→リソース名詞の変換表、`*Scoped` concern、認可、bang、strong parameters
-- **`references/error-handling.md`** — 判断フローDの詳細。失敗の4分類、カスタム例外の条件と置き場、境界での翻訳（データ / 小さな例外 / nil）、「状態を残してから raise」、コントローラのステータス対応表、ジョブの `retry_on` / `discard_on`、報告先
+- `references/logic-placement.md` — 判断フローA
+- `references/state-modeling.md` — 判断フローB
+- `references/controllers.md` — 判断フローC
+- `references/error-handling.md` — 判断フローD
 
 内容は basecamp の fizzy・once-campfire・writebook の実装を読んで裏どりしている（SHAはREADME）。

@@ -3,9 +3,7 @@
 判断フローD の詳細。Rails 既定の例外→ステータス変換は前提として、
 **どこで捕まえ、何に変換し、誰に見せるか**の判断だけを書いている。
 
-3実装ともエラー処理は少ない。カスタム例外は fizzy が `app/` に6つ（別に `lib/` の WebAuthn 部品に階層が1つ）、
-campfire 3、writebook 0。コントローラの `rescue_from` は3実装で1箇所。`ApplicationJob` の
-`retry_on` / `discard_on` は Rails 生成時のコメントのまま。**既定は「何もしない」**で、以下は足す判断をした箇所。
+**既定は「何もしない」。** 以下は足す判断をした箇所。
 
 ## 1. 失敗は 4 種類あり、扱いが全部違う
 
@@ -17,9 +15,7 @@ campfire 3、writebook 0。コントローラの `rescue_from` は3実装で1箇
 | **外部世界**（通信・外部サービス・DB 競合・ファイル） | タイムアウト / DNS / 一意制約 / 壊れた ZIP | **境界で捕まえて**アプリの語彙に翻訳（§4） | `failed` + 理由、固定文のアラート |
 
 同じ `RecordInvalid` でも、フォーム経由なら2行目（`if save`）、UI が起こさせない経路なら1行目（`save!` して 500）。
-`create!` が「常に bang」ではないのはこのため。
-プログラマの失敗は誰も rescue しないのでクラスは要らない。本番でも消さないアサーション
-（fizzy：開発環境以外で flash にマジックリンクが載っていたら `after_action` で `raise`）も同じ。
+プログラマの失敗は誰も rescue しないのでクラスは要らない。
 
 ## 2. ユーザー入力の失敗はバリデーションで受ける
 
@@ -35,8 +31,8 @@ end
 ```
 
 上限や整合性も例外ではなく `errors.add(:base, "...")`。
-複数モデルにまたがる手続き（fizzy の `Signup#complete`）が途中で失敗したら、片付けて
-`errors.add(:base, "固定文")` → `false`、例外は `Rails.error.report` へ。コントローラは `if signup.complete`。
+複数モデルにまたがる手続きが途中で失敗したら、片付けて
+`errors.add(:base, "固定文")` → `false`、例外は `Rails.error.report` へ。
 
 ## 3. カスタム例外クラスを作る条件と置き場
 
@@ -46,13 +42,13 @@ end
 |---|---|
 | 置き場 | オーナークラスの中に1行（`class Archive; class InvalidFileError < StandardError; end`）。`app/errors/` は無い |
 | 継承元 | `StandardError` 直下。`ApplicationError` 基底は無い |
-| 階層 | 包含関係があるときだけ（fizzy の `ConflictError < IntegrityError`：ジョブは `IntegrityError` だけ `discard_on` すればよい） |
-| 名前 | 何が起きたか（`ResponseTooLarge`, `ReconcileAborted`, `TooManyRedirectsError`） |
-| メッセージ | 診断に要る値を埋め込む（`"needs ~#{required} free, found #{available}"`） |
+| 階層 | 包含関係があるときだけ（`ConflictError < IntegrityError`：ジョブは基底だけ `discard_on` すればよい） |
+| 名前 | 何が起きたか（`ResponseTooLarge`, `ReconcileAborted`） |
+| メッセージ | 診断に要る値を埋め込む |
 
 ```ruby
 class Ledger::ReconcileJob < ApplicationJob
-  class ReconcileAborted < StandardError; end          # retry_on に名前を渡すために存在する
+  class ReconcileAborted < StandardError; end
   retry_on ReconcileAborted, wait: 1.minute, attempts: 3
 
   def perform(owner)
@@ -63,8 +59,7 @@ end
 
 モデルの `reconcile_ledger` は boolean を返すだけ。「リトライすべき」という解釈はジョブの都合なので、ジョブが例外に変換する。
 
-例外：`lib/` に切り出したライブラリ相当のコード（fizzy の WebAuthn）は `Error < StandardError` を基底に
-サブクラスを並べ、呼び出し側が1つの名前で rescue できるようにする。アプリ本体には持ち込まない。
+例外: `lib/` に切り出したライブラリ相当のコードは `Error < StandardError` を基底にサブクラスを並べてよい。アプリ本体には持ち込まない。
 
 ## 4. 境界で翻訳する — 外部世界の失敗
 
@@ -74,7 +69,7 @@ end
 ### 4a. データにする（結果を保存・表示するなら）
 
 ```ruby
-def perform_request                      # deliver 側は SKILL.md 判断フローD の例
+def perform_request
   ...
   { code: response.code.to_i }
 rescue Resolv::ResolvError, SocketError
@@ -88,8 +83,21 @@ rescue OpenSSL::SSL::SSLError
 end
 ```
 
-- 種類ごとにシンボルにして保存。画面と後続判定（`succeeded?`、連続失敗カウンタ）が読むのはデータ
-- rescue のグループは列挙する。列挙にないものは知らない失敗なので、未処理のまま上げてよい
+呼び出し側のパターン（状態を残してから raise）:
+
+```ruby
+def deliver
+  processing!
+  self.response = perform_request
+  self.status = :completed
+  save!
+rescue
+  failed!   # transaction の外で
+  raise     # ジョブ側が retry / discard を決める
+end
+```
+
+- 種類ごとにシンボルにして保存。rescue のグループは列挙する
 - 「成功か」と「なぜ失敗か」は別カラム（`status` と `failure_reason` enum）
 
 ### 4b. 小さな例外に翻訳する（上位が名前で分岐するなら）
@@ -106,7 +114,7 @@ end
 
 ### 4c. nil を返す（ベストエフォートなら）
 
-結果が無くても機能が成立する処理（OGP 展開、legacy データの解釈）は nil にし、**なぜ握るかをコメントに書く**。
+結果が無くても機能が成立する処理は nil にし、**なぜ握るかをコメントに書く**。
 
 | 状況 | 記録 |
 |---|---|
@@ -123,7 +131,7 @@ end
 4. バッチの1件隔離（§7）
 
 `rescue Exception` は Rails のエラー処理が届かない場所だけ：スレッドプールの中と、
-ユーザー投稿を描画するビューヘルパー（1件の壊れた投稿で画面全体を落とさない）。必ずログか Sentry に送る。
+ユーザー投稿を描画するビューヘルパー。必ずログか Sentry に送る。
 
 ## 5. 状態を残してから投げ直す
 
@@ -139,19 +147,19 @@ rescue RecordSet::Corrupt, Archive::InvalidFileError => e
   mark_as_failed(:invalid_archive)
   raise e
 rescue => e
-  mark_as_failed        # 理由不明。failure_reason は nil
+  mark_as_failed
   raise e
 end
 ```
 
-- ユーザーは `failed_due_to_conflict?` を、運用者は例外を見る。両方に届く
+- ユーザーは `failed_due_to_conflict?` を、運用者は例外を見る
 - **rescue はトランザクションの外に置く。** 中で `failed!` するとロールバックで消える
 - テストも2面を見る：`assert_raises(Corrupt) { import.check }` の後に `assert import.failed?`
 
 ## 6. コントローラ — 失敗の見せ方
 
-`rescue_from` はほぼ書かない（3実装で1箇所）。`ApplicationController` に `rescue_from StandardError` は無く、
-`RecordNotFound` → 404 等は Rails の `rescue_responses`、エラーページは `public/404.html`。`ErrorsController` は作らない。
+`ApplicationController` に `rescue_from StandardError` は無く、
+`RecordNotFound` → 404 等は Rails の `rescue_responses`、エラーページは `public/404.html`。
 
 **アクション直下の `rescue` は、その行が実際に投げるクラスだけ。**
 
@@ -164,8 +172,8 @@ rescue ActiveRecord::RecordNotUnique
 end
 ```
 
-- 一意制約の競合（同時登録・二重送信）は `rescue RecordNotUnique` で「既にある」側へ。事前の `exists?` では防げない
-- パラメータの解釈失敗は 404 に：`Time.zone.parse(params[:day])` を `rescue ArgumentError, TypeError → nil` にし
+- 一意制約の競合は `rescue RecordNotUnique` で「既にある」側へ。事前の `exists?` では防げない
+- パラメータの解釈失敗は 404 に：`Time.zone.parse(...)` を `rescue ArgumentError, TypeError → nil` にし
   `raise ActiveRecord::RecordNotFound unless day`
 - JSON / Turbo だけで `errors` を返す必要が無いなら、`update!` + `rescue RecordInvalid → head :unprocessable_entity` でよい
 
@@ -180,38 +188,37 @@ end
 | 認証失敗 | `redirect_to new_session_path, alert:` | `render json: { message: }, status: :unauthorized` |
 | レート制限 | `rate_limit ... with: -> { redirect_to ..., alert: }` | `head :too_many_requests` |
 
-JSON の失敗ボディは `@record.errors` か人が読む一文（`{ message: }`）。エラーコード体系は無い。
+JSON の失敗ボディは `@record.errors` か人が読む一文（`{ message: }`）。
 **ステータスが分類、本文は説明。** `alert:` は固定の一文で、例外メッセージは載せない。
 
-**「成立しなかった」は例外ではなく falsy。** fizzy では `toggle_assignment` → 何もしなければ falsy、
-`MagicLink.consume(code)` → nil、`Passkey#authenticate` → nil。コントローラが `if` で 422 やアラートに振り分ける。
+**「成立しなかった」は例外ではなく falsy。** コントローラが `if` で 422 やアラートに振り分ける。
 
 ## 7. ジョブ — 宣言で決め、本文は 1 行
 
-`ApplicationJob` では決めず、ジョブごとに宣言する（fizzy は 19 ジョブ中 14 が `discard_on ActiveJob::DeserializationError` を書いている）。
+`ApplicationJob` では決めず、ジョブごとに宣言する。
 
 | 宣言 | 使う条件 |
 |---|---|
 | `discard_on ActiveJob::DeserializationError` | レコードが消えたら意味が無いジョブ（ほぼ全部） |
-| `discard_on X, report: true`（Rails 8.1+） | 恒久的に無理だが見えていてほしい（ファイルが消えた変換ジョブ） |
+| `discard_on X, report: true`（Rails 8.1+） | 恒久的に無理だが見えていてほしい |
 | `discard_on(*TERMINAL_ERRORS)` | 再実行しても同じ結果になるドメインの失敗 |
 | `retry_on X, wait: :polynomially_longer` | 一時的な原因を名指し（`Net::OpenTimeout`, `Net::SMTPServerBusy`） |
 | `retry_on X, wait: 1.minute, attempts: 3` | 再試行で解ける競合（`ReconcileAborted`） |
-| `rescue_from X do ... raise end` | 例外のメッセージを見て分けるとき（SMTP 5xx の宛先不在だけ無視、他は `raise`） |
+| `rescue_from X do ... raise end` | 例外のメッセージを見て分けるとき |
 
 - `retry_on` に生のネットワーク例外を書いてよいのは、境界を自分で持たないとき（ActionMailer の配送）。
   境界を自分で持つなら `Net::*` は境界の中で 4a か 4b に翻訳し、`retry_on` には自前の例外を渡す
 - `retry_on StandardError` は無い。`perform` に `rescue` / `retry_job` も書かない
 - `ActiveJob::Continuable`（Rails 8.1+）は例外時にステップから再開する。再開してはいけない失敗は
   `resume_job(exception)` をオーバーライドして再 `raise` し、`discard_on` に届かせる
-- バッチは1件ずつ隔離：`rescue StandardError => e; Rails.error.report(e, context: { record_id: })` で残りを止めない
+- バッチは1件ずつ隔離：`rescue StandardError => e; Rails.error.report(e, context: { record_id: })`
 
 ## 8. 報告
 
 | 手段 | 用途 |
 |---|---|
 | `Rails.error.report(e, severity:, context:)` | 握るが知りたい失敗 |
-| `Rails.error.add_middleware ->(error, context:, **) { context.merge(account_id: ...) }` | テナントの文脈を全レポートに付ける（initializer に1つ） |
+| `Rails.error.add_middleware ->(error, context:, **) { context.merge(account_id: ...) }` | テナントの文脈を全レポートに付ける |
 | `Sentry.capture_exception e, level: :info` | 想定内だが件数は見たい |
 | `Rails.logger.warn "[Ledger] ... #{self.class}##{id} (#{e})"` | ベストエフォート失敗。機能名 + 識別子を含める |
 
