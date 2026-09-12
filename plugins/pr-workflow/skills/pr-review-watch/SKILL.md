@@ -40,27 +40,13 @@ gh pr view <PR番号> --json commits --jq '.commits[-1].committedDate'
 
 フォアグラウンドで回さないこと（チャットがブロックされ、10 分でタイムアウトする）。
 
-`PR` と `BASE`（ベースライン）を埋めてバックグラウンド起動する:
+ポーリングはスクリプトに任せる（60s × 30 = 最大 30 分。`INTERVAL_SEC` / `MAX_ATTEMPTS` で変更可）:
 
 ```bash
-PR=<PR番号>
-BASE='<ベースライン ISO8601 UTC>'
-for i in $(seq 1 30); do   # 60s × 30 = 最大 30 分
-  NEW=$(
-    {
-      gh api --paginate "repos/{owner}/{repo}/pulls/$PR/reviews" \
-        --jq '.[] | select(.submitted_at > "'"$BASE"'") | select((.body|length>0) or .state!="COMMENTED") | {kind:"review", author:.user.login, state, body, at:.submitted_at, url:.html_url}'
-      gh api --paginate "repos/{owner}/{repo}/pulls/$PR/comments" \
-        --jq '.[] | select(.created_at > "'"$BASE"'") | {kind:"inline", author:.user.login, path, line, body, at:.created_at, url:.html_url}'
-      gh api --paginate "repos/{owner}/{repo}/issues/$PR/comments" \
-        --jq '.[] | select(.created_at > "'"$BASE"'") | {kind:"conversation", author:.user.login, body, at:.created_at, url:.html_url}'
-    } 2>/dev/null
-  )
-  if [ -n "$NEW" ]; then echo "$NEW"; exit 0; fi
-  sleep 60
-done
-echo "TIMEOUT: 監視ウィンドウ内に新着コメントなし"
+bash "${CLAUDE_PLUGIN_ROOT}/skills/pr-review-watch/scripts/watch-new-comments.sh" <PR番号> '<ベースライン ISO8601 UTC>'
 ```
+
+新着があれば JSON 行を stdout に出して終了。なければ `TIMEOUT: 監視ウィンドウ内に新着コメントなし` を出して終了。
 
 起動したら「レビュー監視をバックグラウンドで開始した」とユーザーに伝えてターンを終える。
 
