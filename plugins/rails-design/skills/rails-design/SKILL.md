@@ -1,6 +1,6 @@
 ---
 name: rails-design
-description: このスキルはRailsのモデル設計・コード設計の相談やレビューで使用する。モデリングやテーブル設計が関連する機能追加や改修、モデル構造・関連付け・マイグレーション・バリデーションの検討、concernへの分割、POROやservice/フォームオブジェクトの是非、状態の表現方法（enum・boolean・timestamp・has_one・STI）、RESTリソース（resource / resources）やコントローラの設計、Currentの扱い、およびRailsコードのレビューの際に、Railsのベストプラクティスの知識に基づいて壁打ち・レビューを行う。
+description: このスキルはRailsのモデル設計・コード設計の相談やレビューで使用する。モデリングやテーブル設計が関連する機能追加や改修、モデル構造・関連付け・マイグレーション・バリデーションの検討、concernへの分割、POROやservice/フォームオブジェクトの是非、状態の表現方法（enum・boolean・timestamp・has_one・STI）、RESTリソース（resource / resources）やコントローラの設計、Currentの扱い、エラー設計・例外処理・エラーハンドリング（カスタム例外の是非、rescue / rescue_fromの置き場、Result型の要否、ジョブのretry_on / discard_on）、およびRailsコードのレビューの際に、Railsのベストプラクティスの知識に基づいて壁打ち・レビューを行う。
 ---
 
 # Rails モデル設計アドバイザー
@@ -173,7 +173,65 @@ end                                     resource :publication
 
 ---
 
-## 5. 個別の指針
+## 5. 判断フローD: 失敗をどう扱うか
+
+```
+1. 誰の失敗か？
+   ├ プログラマ（前提違反・到達しないはずの分岐・抽象メソッド）
+   │   → raise "説明" / ArgumentError / NotImplementedError。rescue しない。500 でよい
+   ├ ユーザー入力（フォーム・パラメータ）
+   │   → 例外にしない。errors.add + valid? / save の戻り値で if 分岐
+   │     → render :new, status: :unprocessable_entity（フォーム無しなら head）
+   ├ 権限・存在
+   │   → 認可済みスコープの find（404）/ ensure_* の head :forbidden（403）
+   └ 外部世界（ネットワーク・外部サービス・DB の競合・ファイル）
+        2. 境界の PORO かレコードの中で捕まえ、外の例外クラスを外に出さない
+           ├ 結果を保存・表示する → データにする（{ error: :timed_out } / failure_reason enum）
+           ├ 上位が名前で分岐する（rescue / retry_on / discard_on）
+           │   → オーナークラスの中に class XxxError < StandardError; end を1行
+           └ ベストエフォート → nil を返し、理由をコメントに。必要なら logger.warn / Rails.error.report
+        3. 失敗状態を持つレコードは、状態を保存してから raise し直す（failed! → raise）
+        4. ジョブは宣言で決める。perform は1行、rescue は書かない
+           ├ retry_on   → 一時的な原因を名指し（自前の例外か、境界を自分で持たない ActionMailer 配送の Net::OpenTimeout 等）
+           └ discard_on → 恒久的な失敗。見えていてほしければ report: true（Rails 8.1+）
+```
+
+**既定は「何もしない」。** `ApplicationController` に `rescue_from` は置かず、Rails 既定の `rescue_responses` に任せる。
+
+```ruby
+class Webhook::Delivery < ApplicationRecord
+  enum :status, %w[ pending processing completed failed ].index_by(&:itself), default: :pending
+  store :response, coder: JSON
+
+  def deliver
+    processing!
+    self.response = perform_request      # 外の例外は perform_request の中で { error: :xxx } に翻訳済み
+    self.status = :completed
+    save!
+  rescue
+    failed!                              # 状態を残してから（transaction の外で）
+    raise                                # ジョブ側が retry / discard を決める
+  end
+end
+
+class Webhook::DeliveryJob < ApplicationJob
+  discard_on ActiveJob::DeserializationError
+
+  def perform(delivery) = delivery.deliver
+end
+```
+
+`Net::ReadTimeout` を見るのは `perform_request` の中だけ。ジョブが再試行したい失敗は、境界が自前の例外に翻訳して `retry_on` に渡す。
+
+**「成立しなかった」は例外ではなく falsy**（`toggle_star` が何もしなかった、`MagicLink.consume` が該当なし）。
+コントローラが `if` で 422 やアラートに振り分ける。**起きてはいけない**失敗だけ bang で 500。
+アクション直下の `rescue` は、その行が実際に投げるクラスだけ。`rescue => e` をコントローラに書かない。
+
+詳細は `references/error-handling.md`。
+
+---
+
+## 6. 個別の指針
 
 ### フォームオブジェクト
 画面ごとに違うバリデーション、複数モデルにまたがる入力は
@@ -223,6 +281,11 @@ HABTMは避ける。関連自体が独立したイベントエンティティに
 8. **`set_xxx` が認可済みスコープから find しているか** — `Model.find` の後で権限チェックになっていないか
 9. **コントローラのアクションが5行を超えていないか** — 超えているならモデルに移せる塊がある
 10. **書き込みがbangか、失敗を扱う分岐があるか** — 戻り値を無視した `save` / `update` が最悪
+11. **カスタム例外に rescue する人がいるか** — 誰も rescue / `retry_on` / `discard_on` しないなら `raise "説明"` でよい。`app/errors/` や `ApplicationError` 基底、`ApplicationController` の `rescue_from` になっていないか
+12. **gem・ネットワーク層の例外が境界の外に出ていないか** — `Net::ReadTimeout` をコントローラやジョブで rescue していたら翻訳漏れ
+13. **`rescue => e` の置き場** — 「状態を保存して raise し直す」「ベストエフォートで nil」「バッチの1件隔離」以外に無いか。握る rescue に理由のコメントがあるか（記録は場面で）。失敗を握ってジョブを成功にしていないか
+14. **ユーザー入力の失敗を例外で運んでいないか** — `errors.add` + 戻り値、`status: :unprocessable_entity`
+15. **ジョブの `perform` に `rescue` / `retry_job` が無いか** — `retry_on` は一時的な原因を名指し、`discard_on ActiveJob::DeserializationError` があるか
 
 ## 「惰性 → リファレンス実装」対照表
 
@@ -244,6 +307,13 @@ HABTMは避ける。関連自体が独立したイベントエンティティに
 | コントローラでトランザクション | モデルのメソッドの中で `transaction do` |
 | `params.require(...).permit(...)` | `params.expect(...)`（Rails 8+） |
 | ジョブクラスにロジックを書く | ジョブは1行、モデルのメソッドを呼ぶ |
+| `app/errors/` + `ApplicationError` 基底 | オーナークラスの中に `class XxxError < StandardError; end` を1行 |
+| `rescue_from StandardError` を `ApplicationController` に | 書かない。Rails の `rescue_responses` + 静的エラーページ |
+| `Result.failure(:timeout)` / Either 型 | 失敗を持つレコード（`status` + `failure_reason`）か素の例外 |
+| ユーザー入力の失敗を `raise InvalidInput` | `errors.add` + falsy 戻り値、`status: :unprocessable_entity` |
+| ジョブの `perform` に `rescue => e; retry_job` | `retry_on` / `discard_on` の宣言。本文は1行 |
+
+エラー編の全表は `references/error-handling.md` の末尾。
 
 ## コードスタイルの注意
 
@@ -263,8 +333,8 @@ HABTMは避ける。関連自体が独立したイベントエンティティに
 
 ## 対話の進め方
 
-行為の主体と対象をヒアリング → リソース/イベントの識別 → 判断フローA/B/Cの適用 →
-実装イメージ（モデル定義・関連付け・ルーティング）の提示 → 直交性や拡張性の懸念を指摘。
+行為の主体と対象をヒアリング → リソース/イベントの識別 → 判断フローA/B/C/Dの適用 →
+実装イメージ（モデル定義・関連付け・ルーティング・失敗時の経路）の提示 → 直交性や拡張性の懸念を指摘。
 
 判断フローは上から順に当てはめるためのもので、条件を満たさないのに下位の選択肢を
 飛ばして採用しない。特に**「なんでもレコード化」は過剰設計**。
@@ -275,5 +345,6 @@ HABTMは避ける。関連自体が独立したイベントエンティティに
 - **`references/logic-placement.md`** — 判断フローAの詳細。concernの2種類と切り方、テンプレートメソッド方式、POROの4分類と置き場
 - **`references/state-modeling.md`** — 判断フローBの詳細。STI / delegated_type / ジョイン / enum / timestamp / boolean の使い分け
 - **`references/controllers.md`** — 判断フローCの詳細。動詞→リソース名詞の変換表、`*Scoped` concern、認可、bang、strong parameters
+- **`references/error-handling.md`** — 判断フローDの詳細。失敗の4分類、カスタム例外の条件と置き場、境界での翻訳（データ / 小さな例外 / nil）、「状態を残してから raise」、コントローラのステータス対応表、ジョブの `retry_on` / `discard_on`、報告先
 
 内容は basecamp の fizzy・once-campfire・writebook の実装を読んで裏どりしている（SHAはREADME）。
