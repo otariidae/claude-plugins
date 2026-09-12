@@ -225,6 +225,11 @@ HABTMは避ける。関連自体に「いつ・どの役割で」を持てるよ
 現状維持でよいと結論していいのは、そのコードが**別の明示された方針に従っていると分かる**ときだけ。
 逆に、該当を見つけたのに指摘を省いたレビューは、このスキルを読んだ意味が無くなる。
 
+**この一覧は下限であって上限ではない。** 当て終わったら最後に一度、
+「一覧に無いが、このコードで一番まずいことは何か」を自分の頭で考えて確かめる。
+一覧は勘で出る指摘を**置き換える**ためではなく、勘の**外側を足す**ためにある。
+一覧を埋めただけで書き始めると、載っていない種類の問題が丸ごと視野から落ちる。
+
 ### config/routes.rb
 - [ ] `post :publish` / `member do ... end` の動詞アクション → 動詞を名詞化して `resource :publication`（create/destroy）
 - [ ] `toggle_*` → トグル1本にしない。create と destroy に割る
@@ -257,7 +262,10 @@ HABTMは避ける。関連自体に「いつ・どの役割で」を持てるよ
 - [ ] `rescue_from StandardError` / 各層で `rescue => e; nil` → 書かない。境界1箇所で翻訳
 - [ ] `Result.failure` / 入力失敗を `raise` / 「成立しなかった」を例外 → 失敗レコードか素の例外 / `errors.add` + falsy
 - [ ] `perform` に `rescue; retry_job` / 握ってジョブ成功 → `retry_on` / `discard_on`。`failed!` してから `raise`
-- [ ] 失敗状態を持つレコードなのに保存せず raise → `failed!` してから `raise`
+- [ ] 外部呼び出しの結果を持つレコードが boolean 1本（`paid` / `sent` / `synced`）
+      → 成功しか表せていない。失敗と未確定（タイムアウトで結果不明）をデータにする
+      （status enum / `failure_reason` enum）。**失敗状態が無いレコードほど見落としやすい**
+- [ ] 失敗を記録できるレコードなのに、保存せずに raise している → `failed!` してから `raise`
 - [ ] `transaction` 内で `failed!` / 事前 `exists?` → rescue は外。一意制約 + `RecordNotUnique`
 
 ## コードスタイルの注意
