@@ -18,7 +18,7 @@ description: PR のマージコンフリクト状態を確認し、結果（コ�
 
 ### 2. マージ可否＋コンフリクト確認
 
-UNKNOWN 待ち（最大 4 回 × 30 秒）と、CONFLICTING 時のコンフリクトファイル特定はスクリプトに任せる。通常 1〜2 分以内に解決するためフォアグラウンドで待ってよい。
+UNKNOWN 待ち（最大 4 回 × 30 秒）と、CONFLICTING 時のコンフリクトファイル特定はスクリプトに任せる。通常 1〜2 分以内に解決するためフォアグラウンドで待ってよい。ローカル判定は `git merge-tree --write-tree`（git 2.38+）を使う。
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/skills/conflict-check/scripts/check-conflicts.sh" <PR番号> [<baseRefName>]
