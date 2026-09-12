@@ -16,40 +16,34 @@ description: PR のマージコンフリクト状態を確認し、結果（コ�
 - state が `OPEN` 以外 → 確認
 - 自動検出かつ現在ブランチが headRef と異なる → 警告
 
-### 2. マージ可否確認
+### 2. マージ可否＋コンフリクト確認
 
-`gh pr view <PR番号> --json mergeable,mergeStateStatus` を叩く。
-
-push 直後は `mergeable: UNKNOWN` になる（GitHub の計算待ち）。UNKNOWN なら 30 秒待って最大 4 回リトライする:
+UNKNOWN 待ち（最大 4 回 × 30 秒）と、CONFLICTING 時のコンフリクトファイル特定はスクリプトに任せる。通常 1〜2 分以内に解決するためフォアグラウンドで待ってよい。
 
 ```bash
-PR=<PR番号>
-for i in $(seq 1 4); do
-  RESULT=$(gh pr view "$PR" --json mergeable,mergeStateStatus)
-  MERGEABLE=$(echo "$RESULT" | jq -r '.mergeable')
-  if [ "$MERGEABLE" != "UNKNOWN" ]; then echo "$RESULT"; exit 0; fi
-  sleep 30
-done
-echo "$RESULT"  # UNKNOWN のまま返す
+bash "${CLAUDE_PLUGIN_ROOT}/skills/conflict-check/scripts/check-conflicts.sh" <PR番号> [<baseRefName>]
 ```
 
-通常 1〜2 分以内に解決するため、フォアグラウンドで待って問題ない。
+`INTERVAL_SEC` / `MAX_ATTEMPTS` / `REMOTE` で調整可。stdout に JSON が 1 オブジェクト出る:
+
+| フィールド | 意味 |
+|-----------|------|
+| `mergeable` | `MERGEABLE` / `CONFLICTING` / `UNKNOWN` など |
+| `mergeStateStatus` | `CLEAN` / `BEHIND` / `DIRTY` など |
+| `baseRefName` | ベースブランチ |
+| `conflictFiles` | コンフリクトファイルパスの配列（該当時のみ非空） |
+| `localCheck` | `skipped`（API が CONFLICTING 以外）/ `conflicts` / `clean`（API と不一致）/ `error` |
 
 ### 3. 結果報告
 
-**MERGEABLE:**
+**mergeable が MERGEABLE:**
 ✅ コンフリクトなし (PR #<番号>) — `<baseRefName>` へマージ可能
 mergeStateStatus が `BEHIND` なら「ベースより遅れているがコンフリクトはなし」と併記。
 
-**CONFLICTING:**
-コンフリクトファイルを特定:
-```bash
-git fetch origin "$BASE" 2>/dev/null
-git merge-tree --write-tree HEAD "origin/$BASE" 2>&1 | head -200
-```
-git 2.38 未満の代替: `git merge-tree $(git merge-base HEAD "origin/$BASE") HEAD "origin/$BASE" 2>&1 | grep -E "^changed in both|^added in both" | head -50`
-
-exit code 0 なら「GitHub API と不一致、コンフリクトなし」と伝える。非 0 なら出力からコンフリクトファイルを抽出して報告:
+**mergeable が CONFLICTING:**
+- `localCheck: conflicts` → ファイル一覧を報告
+- `localCheck: clean` → 「GitHub API と不一致、コンフリクトなし」と伝える
+- `localCheck: error` → fetch / merge-tree 失敗。再実行を促す
 
 ❌ コンフリクトあり (PR #<番号>)
 コンフリクトしているファイル:
@@ -58,7 +52,7 @@ exit code 0 なら「GitHub API と不一致、コンフリクトなし」と伝
 
 rebase で解消する？
 
-**4 回リトライ後も UNKNOWN:**
+**mergeable が UNKNOWN のまま:**
 ⚠️ マージ可否確認タイムアウト (PR #<番号>) — GitHub がまだ計算中の可能性あり。再確認は conflict-check を再実行。
 
 ## 制約
