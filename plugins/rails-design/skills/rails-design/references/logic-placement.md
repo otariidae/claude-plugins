@@ -1,6 +1,6 @@
 # ロジックの置き場（concern と PORO）
 
-判断フローA の詳細。判断が変わる点だけ。
+判断が変わる点だけ。
 
 ## concern は 2 種類
 
@@ -14,11 +14,34 @@
 
 ## 1 concern = 1 機能
 
-関連 + スコープ + 述語 + 操作 + コールバックが1ファイル。消すときはファイルごと。
+関連 + スコープ + 述語 + 操作 + コールバックが1ファイル。機構で切らない。
 
-| 良い | 悪い |
-|---|---|
-| `Post::Publishable` / `Archivable` | `Associations` / `Validations`（機構で切る）/ `Helpers` / `Part1` |
+```ruby
+# app/models/user/watchable.rb
+module User::Watchable
+  extend ActiveSupport::Concern
+
+  included do
+    has_many :watches, dependent: :destroy
+    has_many :watched_posts, through: :watches, source: :post
+    scope :watching, ->(post) { joins(:watches).where(watches: { post: post }) }
+    after_create_commit :watch_welcome_post
+  end
+
+  def watching?(post) = watches.exists?(post: post)
+
+  def watch(post)
+    watches.find_or_create_by!(post: post)
+  end
+
+  def unwatch(post)
+    watches.find_by(post: post)&.destroy!
+  end
+
+  private
+    def watch_welcome_post = watch(Post.welcome)
+end
+```
 
 命名は**形容詞か名詞**（動詞不可）。`-able` / 形容詞 / 複数形名詞。
 
@@ -67,8 +90,7 @@ end
 試行を記録する外部通信は AR にしてよい（`Webhook::Delivery`）。
 `on:` の罠は SKILL.md「個別の指針」。
 
-**置き場は `app/models`。** `app/services` 等は作らない。
-避ける名: `*Service` / `*Manager` / `*Handler` / `*Processor` / `*UseCase`。
+**置き場は `app/models`。**
 `-er` / `-or`（`Notifier`, `SlugGenerator`）は普通に使う。
 
 | 症状 | 置き場 |

@@ -1,12 +1,8 @@
 # rails-design プラグイン
 
-Railsにおける良い設計を支援するためのプラグインです。モデル設計とテストデータ設計（FactoryBot）の2つのスキルを提供します。
+Railsにおける良い設計を支援するためのプラグイン。以下の設計領域をサポートします：
 
-## 概要
-
-このプラグインは、Rails開発における以下の設計領域をサポートします：
-
-- モデル設計（`rails-design` スキル）
+- モデル・コントローラー・エラー設計（`rails-design` スキル）
 - テストデータ設計（`factorybot-design` スキル）
 
 ## 参考文献
@@ -25,10 +21,7 @@ Railsにおける良い設計を支援するためのプラグインです。モ
 
 ### 37signals のリファレンス実装
 
-`rails-design` スキルの concern / PORO / 状態表現 / REST リソース化 / コントローラ /
-エラー設計（例外クラス・rescue の置き場・ジョブの retry / discard）に関する記述は、
-下記の公開実装を実際に読んで裏どりしました。
-
+- https://rubyonrails.org/docs/reference-apps
 - [basecamp/fizzy](https://github.com/basecamp/fizzy)（O'Saasy License）— `ebfb067`
 - [basecamp/once-campfire](https://github.com/basecamp/once-campfire)（MIT）— `ef147d1`
 - [basecamp/writebook](https://github.com/basecamp/writebook)（ソース公開・OSS ではない）— `3f98703`

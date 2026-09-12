@@ -17,9 +17,9 @@
 
 ## 2. ユーザー入力はバリデーションで受ける
 
-パース例外はその場で `errors.add` に変える。
-
 ```ruby
+validate :validate_url
+
 def validate_url
   uri = URI.parse(url.presence)
   errors.add :url, "must use http or https" unless uri.scheme.in?(%w[ http https ])
@@ -30,7 +30,35 @@ end
 
 複数モデル手続きが途中で失敗したら、片付けて `errors.add` → `false`、例外は `Rails.error.report` へ。
 
-## 3. カスタム例外 — 名前で rescue する人がいるときだけ
+```ruby
+# Signup など ActiveModel::Model の手続き PORO
+def complete
+  return false unless valid?
+
+  @user = User.create!(email:)
+  @user.create_default_project!
+  true
+rescue => e
+  @user&.destroy
+  errors.add :base, "Could not complete sign-up"
+  Rails.error.report(e, severity: :error)
+  false
+end
+```
+
+## 3. カスタム例外 — この失敗だけ別扱いするとき
+
+原因が違うだけでは切らない。**その後の対処・記録・見えるものが分岐するとき**だけ。
+
+```
+この失敗の「その後」は他と同じでよいか？
+├ 同じ（同じ retry / 同じ failed / 同じログ / 同じ nil）
+│   → raise "説明" / ArgumentError 等。クラス不要
+└ 違う（retry と discard、failure_reason、翻訳先、見える理由が分かれる）
+    → 別扱い → オーナークラスに class Xxx < StandardError; end を1行
+```
+
+別扱いの手段が `rescue` / `retry_on` / `discard_on` / 翻訳先の分岐。型がキーになる。
 
 | 判断 | 形 |
 |---|---|
@@ -50,6 +78,28 @@ end
 ```
 
 モデルは boolean を返すだけ。「リトライすべき」はジョブの都合なのでジョブが例外に変換する。
+
+ジョブ以外は、記録する理由が分岐するとき。捕まえたら状態を残してから `raise` し直す。
+
+```ruby
+class Archive::Import < ApplicationRecord
+  class InsufficientSpace < StandardError; end
+
+  def process
+    ensure_space!
+    extract_and_apply!
+  rescue InsufficientSpace
+    mark_as_failed(:insufficient_space)
+    raise
+  end
+
+  private
+    def ensure_space!
+      raise InsufficientSpace, "needs ~#{needed} free, found #{available}" if available < needed
+    end
+end
+```
+
 `lib/` のライブラリ相当だけ `Error < StandardError` 基底を置いてよい。アプリ本体には持ち込まない。
 
 ## 4. 境界で翻訳する
@@ -58,7 +108,10 @@ end
 
 ### 4a. データ（結果を保存・表示するなら）
 
+外部への1回の試行をレコードに残すとき（Webhook 配送など）。
+
 ```ruby
+# Webhook::Delivery 相当
 def perform_request
   { code: response.code.to_i }
 rescue Resolv::ResolvError, SocketError
@@ -73,19 +126,21 @@ end
 
 def deliver
   processing!
-  self.response = perform_request
+  self.response = perform_request  # 成功も失敗もハッシュ。例外にはしない
   self.status = :completed
   save!
 rescue
-  failed!   # transaction の外で。中で failed! するとロールバックで消える
-  raise
+  failed!   # 状態保存や save! 自体が落ちたとき。transaction の外で。中だとロールバックで消える
+  raise     # ジョブの retry_on / discard_on へ
 end
 ```
 
-rescue のグループは列挙する。「成功か」と「なぜ失敗か」は別カラム（`status` / `failure_reason`）。
+rescue のグループは列挙する。「成功か」と「なぜ失敗か」は別の場所（ここでは `status` と `response[:error]`）。
 テストも2面: `assert_raises` の後に `assert record.failed?`。
 
-### 4b. 小さな例外（上位が名前で分岐するなら）
+### 4b. アプリの例外型へ（別扱いするために型が要るなら）
+
+外の例外をそのまま出さず、オーナークラスの型に載せ替える。中身はメッセージの引き渡し程度でよい（§3）。
 
 ```ruby
 rescue ZipKit::FileReader::ReadError, ZipKit::FileReader::MissingEOCD => e
@@ -96,8 +151,19 @@ rescue ZipKit::FileReader::ReadError, ZipKit::FileReader::MissingEOCD => e
 
 ### 4c. nil（ベストエフォート）
 
-なぜ握るかをコメントに書く。記録: 無し / `logger.warn` / `Rails.error.report`（知りたいが止めない）/
-競合の片方は無し（冪等の一部）。
+**主処理を止めたくない／無くても成立する付加的なこと**のとき。失敗の見える結果は「無し」でよく、理由をレコードに残す必要もない。
+
+記録: 無し / `logger.warn` / `Rails.error.report`（知りたいが止めない）。
+
+```ruby
+# Opengraph プレビューなど。本体の投稿はすでに成立している
+def fetch_html
+  Opengraph::Fetch.new.fetch_document(url)
+rescue => e
+  Rails.logger.warn "Failed to fetch #{url} (#{e})"  # なぜ握るか: プレビューは付加
+  nil
+end
+```
 
 ### クラス指定なしの `rescue` が許される箇所
 
@@ -155,11 +221,11 @@ end
 `Rails.error.report`（握るが知りたい）/ `add_middleware` でテナント文脈 /
 `Sentry.capture_exception`（件数は見たい）/ `logger.warn "[機能] ..."`（ベストエフォート）。
 
-## 「惰性 → リファレンス実装」対照表（エラー編）
+## アンチパターン
 
-| つい書いてしまう形 | 37signals 流 |
+| つい書いてしまう形 | Rails Way |
 |---|---|
-| `app/errors/` + `ApplicationError` / 意味だけの例外クラス | オーナー内1行。誰も rescue しないなら `raise "説明"` |
+| `app/errors/` + `ApplicationError` / 原因が違うだけの例外クラス | オーナー内1行。対処が同じなら `raise "説明"` |
 | `rescue_from StandardError` / 各層で `rescue => e; nil` | 書かない。境界1箇所で翻訳 |
 | `Result.failure` / 入力失敗を `raise` / 「成立しなかった」を例外 | 失敗レコードか素の例外 / `errors.add` + falsy |
 | `perform` に `rescue; retry_job` / 握ってジョブ成功 | `retry_on` / `discard_on`。`failed!` してから `raise` |

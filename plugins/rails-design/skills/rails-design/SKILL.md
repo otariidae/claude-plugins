@@ -75,7 +75,7 @@ Railsのモデル設計の壁打ち相手・レビュアーとして振る舞う
 2. 「誰にとっての状態か」が主体ごとに違う？
    → ジョインモデル（has_many :through）の属性にする
 3. 3値以上のライフサイクル・設定値？
-   → enum（文字列で保存: %w[...].index_by(&:itself)）
+   → enum
 4. 可逆なオン/オフで、付随する属性（誰が・いつ・キー・理由）が要る？
    → has_one レコード + resource
 5. 可逆なオン/オフで、「いつ」だけ要る？
@@ -112,12 +112,16 @@ Railsのモデル設計の壁打ち相手・レビュアーとして振る舞う
 ```
 
 ```ruby
-# 悪い                              # 良い
-resources :posts do                 resources :posts do
-  member { post :publish }            scope module: :posts do
-end                                     resource :publication
-                                      end
-                                    end
+# 良い
+ resources :posts do
+   scope module: :posts do
+     resource :publication
+   end
+ end
+# 悪い
+resources :posts do
+  member { post :publish }
+end
 ```
 
 `Posts::PublicationsController#create` が公開、`#destroy` が公開解除。
@@ -126,7 +130,7 @@ end                                     resource :publication
 **`set_post` は認可済みスコープから find する**（`Current.user.accessible_posts.find(...)`）。
 認可gemは、スコープと `can_*?` 述語で足りるうちは入れない。
 
-動詞→名詞の変換表と詳細は `references/controllers.md`。
+詳細は `references/controllers.md`。
 
 ---
 
@@ -135,7 +139,8 @@ end                                     resource :publication
 ```
 1. 誰の失敗か？
    ├ プログラマ（前提違反・到達しないはずの分岐・抽象メソッド）
-   │   → raise "説明" / ArgumentError / NotImplementedError。rescue しない。500 でよい
+   │   → raise "説明" / ArgumentError / NotImplementedError
+   │     rescue しない。500 でよい
    ├ ユーザー入力（フォーム・パラメータ）
    │   → 例外にしない。errors.add + valid? / save の戻り値で if 分岐
    │     → render :new, status: :unprocessable_entity（フォーム無しなら head）
@@ -144,9 +149,11 @@ end                                     resource :publication
    └ 外部世界（ネットワーク・外部サービス・DB の競合・ファイル）
         2. 境界の PORO かレコードの中で捕まえ、外の例外クラスを外に出さない
            ├ 結果を保存・表示する → データにする（{ error: :timed_out } / failure_reason enum）
-           ├ 上位が名前で分岐する（rescue / retry_on / discard_on）
-           │   → オーナークラスの中に class XxxError < StandardError; end を1行
-           └ ベストエフォート → nil を返し、理由をコメントに。必要なら logger.warn / Rails.error.report
+           ├ その後の対処・記録・見えるものが他と分岐する（別扱い）
+           │   → オーナークラスに class Xxx < StandardError; end を1行
+           │     手段: rescue / retry_on / discard_on / 翻訳先の分岐
+           └ ベストエフォート（主処理を止めない付加。無しで成立する）
+               → nil を返し、なぜ握るかをコメントに。必要なら logger.warn / Rails.error.report
         3. 失敗状態を持つレコードは、状態を保存してから raise し直す（failed! → raise）
         4. ジョブは宣言で決める。perform は1行、rescue は書かない
            ├ retry_on   → 一時的な原因を名指し（自前の例外か、境界を自分で持たない ActionMailer 配送の Net::OpenTimeout 等）
