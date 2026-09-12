@@ -25,7 +25,8 @@ Railsにおける良い設計を支援するためのプラグインです。モ
 
 ### 37signals のリファレンス実装
 
-`rails-design` スキルの concern / PORO / 状態表現 / REST リソース化 / コントローラに関する記述は、
+`rails-design` スキルの concern / PORO / 状態表現 / REST リソース化 / コントローラ /
+エラー設計（例外クラス・rescue の置き場・ジョブの retry / discard）に関する記述は、
 下記の公開実装を実際に読んで裏どりしました。
 
 - [basecamp/fizzy](https://github.com/basecamp/fizzy)（O'Saasy License）— `ebfb067`

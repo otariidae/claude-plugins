@@ -116,7 +116,8 @@ HTTP・SDK・ファイル形式など、**アプリの外側との会話**を1�
 ドメインモデルは入口だけを持ち、通信の詳細を知らない。
 
 `Payment::Charge` が HTTP・タイムアウト・プロバイダ固有のレスポンス解釈を持ち、
-プロバイダのエラーをアプリの語彙の例外（`Payment::Charge::Declined` など）に翻訳する。
+プロバイダのエラーをアプリの語彙の例外（`Payment::Charge::Declined` など）に翻訳する
+（データ・例外・nil のどれに翻訳するかの選び方は `error-handling.md` §4）。
 `Invoice::Payable#pay` は `Payment::Charge.new(...).execute` を呼んで結果を保存するだけで、
 `Net::HTTP` もプロバイダのステータスコードも知らない。
 
