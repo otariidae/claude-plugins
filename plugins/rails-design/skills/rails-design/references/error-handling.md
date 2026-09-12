@@ -220,13 +220,3 @@ end
 
 `Rails.error.report`（握るが知りたい）/ `add_middleware` でテナント文脈 /
 `Sentry.capture_exception`（件数は見たい）/ `logger.warn "[機能] ..."`（ベストエフォート）。
-
-## アンチパターン
-
-| つい書いてしまう形 | Rails Way |
-|---|---|
-| `app/errors/` + `ApplicationError` / 原因が違うだけの例外クラス | オーナー内1行。対処が同じなら `raise "説明"` |
-| `rescue_from StandardError` / 各層で `rescue => e; nil` | 書かない。境界1箇所で翻訳 |
-| `Result.failure` / 入力失敗を `raise` / 「成立しなかった」を例外 | 失敗レコードか素の例外 / `errors.add` + falsy |
-| `perform` に `rescue; retry_job` / 握ってジョブ成功 | `retry_on` / `discard_on`。`failed!` してから `raise` |
-| `transaction` 内で `failed!` / 事前 `exists?` / `alert: e.message` | rescue は外。一意制約 + `RecordNotUnique`。固定文 |

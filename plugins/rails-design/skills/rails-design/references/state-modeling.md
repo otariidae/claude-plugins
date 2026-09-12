@@ -65,16 +65,6 @@ end
 - **timestamp**: 「いつ」だけ。誰が文脈から一意（`notifications.read_at`）。誰が可変なら §4
 - **boolean**: 付随なし。必ず `null: false` + `default:`。操作のリソース化は独立判断
 
-## 状態カラムを増やす前
-
-| つい書きたくなるもの | だいたい正しい形 |
-|---|---|
-| `archived` boolean / status に可逆トグル | 誰が・いつ要るなら `has_one`。直交は別カラム・別レコード |
-| `deleted` | `has_one :trashing` か本当に消す |
-| `published` + `published_at` | どちらか一方（timestamp があれば boolean は導出） |
-| `read_post_ids` (配列/JSON) | ジョインモデル |
-| 同時に立てない / 独立に立つ | enum 1本 / カラム・レコードを分ける |
-
 ## 状態遷移
 
 冪等（`unless archived?`。コントローラで存在チェックしない）/

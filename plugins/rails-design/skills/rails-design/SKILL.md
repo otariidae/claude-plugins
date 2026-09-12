@@ -200,30 +200,31 @@ HABTMは避ける。関連自体に「いつ・どの役割で」を持てるよ
 
 ---
 
-## レビュー時
+## レビュー時に探す匂い
 
-まず下の対照表を走査する。加えて:
+まず下を走査する。詳細は各 `references/*.md`。
 
-- **booleanに `null: false` + `default:` があるか**
-- **コントローラのアクションが5行を超えていないか** — 超えているならモデルに移せる塊がある
-- **書き込みがbangか、失敗を扱う分岐があるか** — 戻り値を無視した `save` / `update` が最悪
-- **エラー経路** — `references/error-handling.md` 末尾の対照表も見る
-
-## 「惰性 → リファレンス実装」対照表
-
-| つい書いてしまう形 | 37signals 流 |
-|---|---|
-| `ApproveInvoiceService` / `SignupProcessor` / `app/services/` | `invoice.approve` / `Signup`。POROも `app/models/` |
-| `post.rb` に全部 / 最初から `app/models/concerns/` | 関心ごとのモデル固有concern → 2モデル目で昇格 |
-| 横断concernを直接include | 同名のモデル固有concernを挟んで `include ::Xxx` |
-| `posts.archived` (boolean) / status に可逆トグル | `has_one :archival`（誰が・いつが要るなら）。直交する状態は別カラム・別レコード |
-| `if type == :direct` の分岐が増える | STI / delegated_type |
-| `post :publish, on: :member` / `POST .../toggle_*` | `resource :publication` / `POST/DELETE .../archival` |
-| `Post.find` してから権限チェック / 最初から Pundit | 認可済みスコープの `find` + `can_*?` + `ensure_*` |
-| コントローラでトランザクション / ジョブにロジック | モデルのメソッドへ。ジョブは1行 |
-| `params.require(...).permit(...)` | `params.expect(...)`（Rails 8+） |
-
-エラー編は `references/error-handling.md` の末尾。
+- `*Service` / `*Processor` / `app/services/` → 主語モデルのメソッド、または `Signup` のような PORO（`app/models/`）
+- `post.rb` に全部 / 最初から `app/models/concerns/` → 関心ごとのモデル固有concern → 2モデル目で昇格
+- 横断concernを直接include → 同名のモデル固有concernを挟んで `include ::Xxx`
+- `archived` boolean / status に可逆トグル → 誰が・いつ要るなら `has_one :archival`。直交する状態は別カラム・別レコード
+- `deleted` → `has_one :trashing` か本当に消す
+- `published` + `published_at` → どちらか一方（timestamp があれば boolean は導出）
+- `read_*_ids`（配列/JSON） → ジョインモデル
+- 同時に立てない値を別カラムに / 独立に立つ値を1つのenumに → enum 1本 / カラム・レコードを分ける
+- `if type == :direct` の分岐が増える → STI / delegated_type
+- boolean に `null: false` + `default:` が無い → 付ける
+- `post :publish` / `toggle_*` → `resource :publication`（create/destroy）
+- `Post.find` してから権限チェック / 最初から Pundit → 認可済みスコープの `find` + `can_*?` + `ensure_*`
+- コントローラでトランザクション / ジョブにロジック → モデルのメソッドへ。ジョブは1行
+- アクションが5行超 → モデルに移せる塊がある
+- 戻り値を無視した `save` / `update` → bang、または失敗を扱う `if`
+- `params.require(...).permit(...)` → `params.expect(...)`（Rails 8+）
+- `app/errors/` + `ApplicationError` / 原因が違うだけの例外クラス → オーナー内1行。対処が同じなら `raise "説明"`
+- `rescue_from StandardError` / 各層で `rescue => e; nil` → 書かない。境界1箇所で翻訳
+- `Result.failure` / 入力失敗を `raise` / 「成立しなかった」を例外 → 失敗レコードか素の例外 / `errors.add` + falsy
+- `perform` に `rescue; retry_job` / 握ってジョブ成功 → `retry_on` / `discard_on`。`failed!` してから `raise`
+- `transaction` 内で `failed!` / 事前 `exists?` / `alert: e.message` → rescue は外。一意制約 + `RecordNotUnique`。固定文
 
 ## コードスタイルの注意
 
