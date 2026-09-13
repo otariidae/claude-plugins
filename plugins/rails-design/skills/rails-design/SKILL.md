@@ -8,6 +8,20 @@ description: Railsのモデル設計・コード設計の壁打ちとレビュ�
 Railsのモデル設計の壁打ち相手・レビュアーとして振る舞う。
 一般的なRailsの書き方は前提として、**デフォルトの直感と違う判断**だけをここに置いている。
 
+## 入口: 相談か、レビューか
+
+**相談**（「どう設計する？」「これでええ？」）なら、判断フローA–Dを上から当てて実装イメージまで出す。
+
+**レビュー**（「見て」「直すとこ教えて」、差分やファイルを渡される）なら、
+本文を書き始める前に**レビューチェックリスト**（`コードスタイルの注意` の直前の節）を1項目ずつ当てる。
+
+これは普段のレビューを**置き換えるものではなく、足すもの**。
+バグ・認可漏れ・N+1・性能・セキュリティは、これまでどおり見つけたら全部書く。
+その上でチェックリストを当てる。順番を逆にすると、目に付いた順に書いて紙幅が尽き、
+`params.expect`、`*Service` の再配置、状態カラムの二重表現のような
+「言われないと気づかない」項目がまとめて落ちる。実際そうなる。
+だから一覧を先に当てて、その結果と自分の発見を合わせて本文を書く。
+
 ## 1. モデルを見つける
 
 ### リソースとイベントの区別
@@ -200,31 +214,73 @@ HABTMは避ける。関連自体に「いつ・どの役割で」を持てるよ
 
 ---
 
-## レビュー時に探す匂い
+## レビューチェックリスト
 
-まず下を走査する。詳細は各 `references/*.md`。
+レビュー本文を書く前に、渡されたファイルに対してここを上から1項目ずつ当てる。
+該当0件の項目のほうが多いのが普通で、それでいい。狙いは勘で出てくる指摘の**外側**を埋めること。
+詳細は各 `references/*.md`。
 
-- `*Service` / `*Processor` / `app/services/` → 主語モデルのメソッド、または `Signup` のような PORO（`app/models/`）
-- `post.rb` に全部 / 最初から `app/models/concerns/` → 関心ごとのモデル固有concern → 2モデル目で昇格
-- 横断concernを直接include → 同名のモデル固有concernを挟んで `include ::Xxx`
-- `archived` boolean / status に可逆トグル → 誰が・いつ要るなら `has_one :archival`。直交する状態は別カラム・別レコード
-- `deleted` → `has_one :trashing` か本当に消す
-- `published` + `published_at` → どちらか一方（timestamp があれば boolean は導出）
-- `read_*_ids`（配列/JSON） → ジョインモデル
-- 同時に立てない値を別カラムに / 独立に立つ値を1つのenumに → enum 1本 / カラム・レコードを分ける
-- `if type == :direct` の分岐が増える → STI / delegated_type
-- boolean に `null: false` + `default:` が無い → 付ける
-- `post :publish` / `toggle_*` → `resource :publication`（create/destroy）
-- `Post.find` してから権限チェック / 最初から Pundit → 認可済みスコープの `find` + `can_*?` + `ensure_*`
-- コントローラでトランザクション / ジョブにロジック → モデルのメソッドへ。ジョブは1行
-- アクションが5行超 → モデルに移せる塊がある
-- 戻り値を無視した `save` / `update` → bang、または失敗を扱う `if`
-- `params.require(...).permit(...)` → `params.expect(...)`（Rails 8+）
-- `app/errors/` + `ApplicationError` / 原因が違うだけの例外クラス → オーナー内1行。対処が同じなら `raise "説明"`
-- `rescue_from StandardError` / 各層で `rescue => e; nil` → 書かない。境界1箇所で翻訳
-- `Result.failure` / 入力失敗を `raise` / 「成立しなかった」を例外 → 失敗レコードか素の例外 / `errors.add` + falsy
-- `perform` に `rescue; retry_job` / 握ってジョブ成功 → `retry_on` / `discard_on`。`failed!` してから `raise`
-- `transaction` 内で `failed!` / 事前 `exists?` / `alert: e.message` → rescue は外。一意制約 + `RecordNotUnique`。固定文
+**該当したら書く。「小さいから」「今のままでも動くから」で落とさない。**
+ここに並ぶのはどれも、後から変えると呼び出し側・URL・既存データまで巻き込む種類の項目で、
+レビューの時点なら1行で済む。だから「動くから今のままで妥当」は理由にならない。
+現状維持でよいと結論していいのは、次のどちらかが分かるときだけ。
+**(a) そのコードが別の明示された方針に従っている**、
+**(b) 周囲の既存コードで同じ形が確立した慣習になっていて、ここだけ直すと不揃いになる**。
+(b) のときは「一覧には該当するが、この repo の慣習に合わせて据え置く」と一言書いて残す。
+黙って落とすのとは違う。
+逆に、該当を見つけたのに理由も書かず省いたレビューは、このスキルを読んだ意味が無くなる。
+
+**この一覧は下限であって上限ではない。** 当て終わったら最後に一度、
+「一覧に無いが、このコードで一番まずいことは何か」を自分の頭で考えて確かめる。
+一覧は勘で出る指摘を**置き換える**ためではなく、勘の**外側を足す**ためにある。
+一覧を埋めただけで書き始めると、載っていない種類の問題が丸ごと視野から落ちる。
+
+### config/routes.rb
+- [ ] `post :publish` / `member do ... end` の動詞アクション → 動詞を名詞化して `resource :publication`（create/destroy）
+- [ ] `toggle_*` → トグル1本にしない。create と destroy に割る
+
+### app/controllers
+- [ ] アクションが5行超 → モデルに移せる塊がある
+- [ ] コントローラで `transaction` → モデルのメソッドへ
+- [ ] `Xxx.find` してから権限チェック / 最初から Pundit → 認可済みスコープの `find` + `can_*?` + `ensure_*`
+- [ ] 戻り値を無視した `save` / `update` → bang、または失敗を扱う `if`
+- [ ] `params.require(...).permit(...)` → `params.expect(...)`（Rails 8+）
+- [ ] アクション直下の `rescue => e` / `alert: e.message` → 書かない。出すなら固定文
+
+### app/models
+- [ ] `*Service` / `*Manager` / `*Handler` / `*Processor` / `*UseCase` / `app/services/`
+      → 主語モデルのメソッド、または `Signup` のような PORO（`app/models/`）。
+      `-er` / `-or` の行為者名詞（`Notifier`, `SlugGenerator`）は対象外
+- [ ] `if type == :direct` のような型による分岐が増えている → STI / delegated_type
+- [ ] `post.rb` に全部 / 最初から `app/models/concerns/` → 関心ごとのモデル固有concern → 2モデル目で昇格
+- [ ] 横断concernを直接include → 同名のモデル固有concernを挟んで `include ::Xxx`
+- [ ] `has_and_belongs_to_many` → `has_many :through`（関連自体に「いつ・どの役割で」を持たせる）
+
+### 状態を表すカラム（migration / schema も見る）
+- [ ] `archived` boolean / status に可逆トグル → 誰が・いつ要るなら `has_one :archival`。直交する状態は別カラム・別レコード
+- [ ] `deleted` → `has_one :trashing` か本当に消す
+- [ ] `published` + `published_at` が両方ある → どちらか一方（timestamp があれば boolean は導出）
+- [ ] `read_*_ids`（配列/JSON） → ジョインモデル
+- [ ] 同時に立てない値を別カラムに / 独立に立つ値を1つのenumに → enum 1本 / カラム・レコードを分ける
+- [ ] boolean に `null: false` + `default:` が無い → 付ける
+
+### app/jobs
+- [ ] `perform` にドメインロジックが書かれている → モデルのメソッドへ。`perform` は1行
+- [ ] ジョブにしか無い分岐・計算 → 呼び出し先のモデルに移す（ジョブは「いつ呼ぶか」だけ持つ）
+
+### 失敗・例外・ジョブ
+- [ ] `app/errors/` + `ApplicationError` / 原因が違うだけの例外クラス → オーナー内1行。対処が同じなら `raise "説明"`
+- [ ] `rescue_from StandardError` / 各層で `rescue => e; nil` → 書かない。境界1箇所で翻訳
+- [ ] `Result.failure` / 入力失敗を `raise` / 「成立しなかった」を例外 → 失敗レコードか素の例外 / `errors.add` + falsy
+- [ ] `perform` に `rescue; retry_job` / 握ってジョブ成功 → `retry_on` / `discard_on`。`failed!` してから `raise`
+- [ ] 外部呼び出しの結果を持つレコードが boolean 1本（`paid` / `sent` / `synced`）
+      → 成功しか表せていない。失敗と未確定（タイムアウトで結果不明）をデータにする
+      （status enum / `failure_reason` enum）。**失敗状態が無いレコードほど見落としやすい**
+- [ ] 失敗を記録できるレコードなのに、保存せずに raise している → `failed!` してから `raise`
+- [ ] `transaction` 内で `failed!` / 事前 `exists?` → rescue は外。一意制約 + `RecordNotUnique`
+
+### コードスタイル
+- [ ] 次節「コードスタイルの注意」の4点（ガード節 / `!` / `_now` / エンドレスメソッドの修飾子）を当てる
 
 ## コードスタイルの注意
 
@@ -238,9 +294,17 @@ HABTMは避ける。関連自体に「いつ・どの役割で」を持てるよ
 
 ## 対話の進め方
 
-行為の主体と対象をヒアリング → リソース/イベントの識別 → 判断フローA/B/C/D（上から順）→
-実装イメージの提示。特に**「なんでもレコード化」は過剰設計**。
-既存コードの慣習・チームの合意・Railsのバージョンを優先する。
+**相談のとき**: 行為の主体と対象をヒアリング → リソース/イベントの識別 →
+判断フローA/B/C/D（上から順）→ 実装イメージの提示。
+
+**レビューのとき**: 渡されたファイルにレビューチェックリストを当てる →
+チェックリストの該当項目と、自分で見つけた問題（バグ・認可・性能など）を合わせ、
+影響の大きい順に並べて書く → 直した後の形をコードで示す。
+該当が無かった領域を「見たが問題なし」と長々と書かない（書くなら1行）。
+
+どちらでも、特に**「なんでもレコード化」は過剰設計**。
+既存コードの慣習・チームの合意・Railsのバージョンを優先する
+（チェックリストの据え置き条件 (b) と同じ判断。据え置くなら理由を1行残す）。
 
 ## references
 
